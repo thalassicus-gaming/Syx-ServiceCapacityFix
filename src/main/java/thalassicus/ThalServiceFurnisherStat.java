@@ -1,5 +1,5 @@
 // ThalServiceFurnisherStat.java
-// Document Version 1.0.2
+// Document Version 1.0.3
 // Creation date: 2026/07/13
 // Creator: Thalassicus
 
@@ -42,7 +42,7 @@ public class ThalServiceFurnisherStat extends FurnisherStat {
 
   private static final CharSequence LABEL = "Capacity";
   private static final CharSequence DESCRIPTION =
-      "An estimate of how many subjects the room will be able to serve, based on your subjects' properties. The first number reflects only the services you have actually built; the number in parentheses assumes every possible service in the game exists in your city.";
+      "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one.";
 
   private final RoomService.ROOM_SERVICE_HASER room;
 
@@ -60,8 +60,8 @@ public class ThalServiceFurnisherStat extends FurnisherStat {
   public GText format(GText t, double slotCount) {
     ThalServiceCapacityCalculator.CapacityMultipliers multipliers =
         ThalServiceCapacityCalculator.correctedCapacityMultipliers(this.room.service());
-    int presentCapacity = (int)(slotCount * multipliers.presentServices());
-    int allCapacity = (int)(slotCount * multipliers.allServices());
+    int presentCapacity = (int)(slotCount * multipliers.presentMultiplier());
+    int allCapacity = (int)(slotCount * multipliers.calibratedMultiplier());
 
     GFORMAT.i(t, presentCapacity);
     t.add(" presently (");

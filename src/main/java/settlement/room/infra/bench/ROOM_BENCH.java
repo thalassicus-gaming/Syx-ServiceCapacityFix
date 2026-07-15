@@ -1,5 +1,5 @@
 // ROOM_BENCH.java
-// Document Version 1.0.2
+// Document Version 1.0.4
 // Creation date: 2026/07/13
 // Creator: Thalassicus
 
@@ -107,8 +107,14 @@ import view.sett.ui.room.UIRoomModule;
 //
 
 public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHaser {
-   private static CharSequence ¤¤Capacity = "Capacity";
-   private static CharSequence ¤¤CapacityD = "An estimate of how many subjects this bench can serve per day.";
+   // Not ¤-prefixed, deliberately: these are our own strings, not part of
+   // Jake's own text, and ¤ appears to trigger some localization/caching
+   // mechanism we haven't fully traced (confirmed to interfere with edits to
+   // an existing ¤-prefixed field in ModuleService.java). This file has no
+   // D.ts() call today, but the safer rule is to never use ¤ for anything we
+   // author ourselves, regardless of whether a given file currently opts in.
+   private static CharSequence CapacityLabel = "Capacity";
+   private static CharSequence CapacityDescription = "An estimate of how many subjects this bench can serve per day. Bench visits occur during a subject's spare time, unlike other services.";
 
    // See the class-level comment above for the full derivation.
    private static final double AVERAGE_VISIT_SECONDS = 93.5;
@@ -193,14 +199,14 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
    private static void appendCapacityLine(GBox box, double seatCount) {
       int capacity = (int)estimatedCapacity(seatCount);
       GText t = box.text();
-      t.add(¤¤Capacity).add(": ");
+      t.add(CapacityLabel).add(": ");
       GFORMAT.i(t, capacity);
       t.add(" presently (");
       GFORMAT.i(t, capacity);
       t.add(" with all services)");
       box.add(t);
       box.NL();
-      box.text(¤¤CapacityD);
+      box.text(CapacityDescription);
    }
 
    @Override

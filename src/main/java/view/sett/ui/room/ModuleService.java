@@ -1,5 +1,5 @@
 // ModuleService.java
-// Document Version 1.0.2
+// Document Version 1.0.4
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
@@ -49,11 +49,19 @@ final class ModuleService implements Modules.ModuleMaker {
    private static CharSequence ¤¤Load = "¤Load";
    private static CharSequence ¤¤Capacity = "¤Capacity";
    private static CharSequence ¤¤CapacityD = "¤An rough estimate of how many subjects that can be served.";
+   // Not ¤-prefixed deliberately: ModuleService.class is scanned by D.ts()
+   // (see the static block below), which appears to cache ¤-prefixed field
+   // text through some localization layer we haven't traced - editing
+   // ¤¤CapacityD's own string content stopped taking effect in-game after a
+   // rebuild, while the surrounding numeric logic updated correctly. Using a
+   // plain field name sidesteps whatever that caching keys on.
+   private static final CharSequence THAL_CAPACITY_DESCRIPTION =
+       "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one.";
    private static CharSequence ¤¤USAGE_DESC = "¤The highest load of this service during a day. Once full, it means there aren't enough services to meet your subjects demands. If low, it's an indication you can cut down on this service.";
    private static CharSequence ¤¤RADIUS = "¤Radius";
    private static CharSequence ¤¤RADIUSD = "¤All services operate within a radius. The radius is the max distance a subject is prepared to walk to get to a service.";
-
-   static {
+  private static CharSequence stuff = ¤¤CapacityD;
+  static {
       D.ts(ModuleService.class);
    }
 
@@ -105,13 +113,13 @@ final class ModuleService implements Modules.ModuleMaker {
                   b.tab(6);
                   ThalServiceCapacityCalculator.CapacityMultipliers manageScrMultipliers = ThalServiceCapacityCalculator.correctedCapacityMultipliers(I.this.p.service());
                   GText manageScrCapacityText = b.text();
-                  GFORMAT.i(manageScrCapacityText, (int)(I.this.p.service().total() * manageScrMultipliers.presentServices()));
+                  GFORMAT.i(manageScrCapacityText, (int)(I.this.p.service().total() * manageScrMultipliers.presentMultiplier()));
                   manageScrCapacityText.s().add('(');
-                  GFORMAT.i(manageScrCapacityText, (int)(I.this.p.service().total() * manageScrMultipliers.allServices()));
+                  GFORMAT.i(manageScrCapacityText, (int)(I.this.p.service().total() * manageScrMultipliers.calibratedMultiplier()));
                   manageScrCapacityText.add(')');
                   b.add(manageScrCapacityText);
                   b.NL();
-                  b.text(ModuleService.¤¤CapacityD);
+                  b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
                   b.NL(8);
                   // Lists any race whose need-rate for this service diverges from the
                   // default, since the Capacity estimate above uses the default rate
@@ -168,9 +176,9 @@ final class ModuleService implements Modules.ModuleMaker {
          box.textL(ModuleService.¤¤Capacity);
          ThalServiceCapacityCalculator.CapacityMultipliers hoverMultipliers = ThalServiceCapacityCalculator.correctedCapacityMultipliers(this.p.service());
          GText hoverCapacityText = box.text();
-         GFORMAT.i(hoverCapacityText, (int)(i.service().total() * hoverMultipliers.presentServices()));
+         GFORMAT.i(hoverCapacityText, (int)(i.service().total() * hoverMultipliers.presentMultiplier()));
          hoverCapacityText.s().add('(');
-         GFORMAT.i(hoverCapacityText, (int)(i.service().total() * hoverMultipliers.allServices()));
+         GFORMAT.i(hoverCapacityText, (int)(i.service().total() * hoverMultipliers.calibratedMultiplier()));
          hoverCapacityText.add(')');
          box.add(hoverCapacityText);
       }
@@ -233,13 +241,13 @@ final class ModuleService implements Modules.ModuleMaker {
                b.tab(6);
                ThalServiceCapacityCalculator.CapacityMultipliers panelMultipliers = ThalServiceCapacityCalculator.correctedCapacityMultipliers(I.this.p.service());
                GText panelCapacityText = b.text();
-               GFORMAT.i(panelCapacityText, (int)(i.total() * panelMultipliers.presentServices()));
+               GFORMAT.i(panelCapacityText, (int)(i.total() * panelMultipliers.presentMultiplier()));
                panelCapacityText.s().add('(');
-               GFORMAT.i(panelCapacityText, (int)(i.total() * panelMultipliers.allServices()));
+               GFORMAT.i(panelCapacityText, (int)(i.total() * panelMultipliers.calibratedMultiplier()));
                panelCapacityText.add(')');
                text.add(panelCapacityText);
                b.NL();
-               b.text(ModuleService.¤¤CapacityD);
+               b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
                b.NL(8);
                // Lists any race whose need-rate for this service diverges from the
                // default, since the Capacity estimate above uses the default rate

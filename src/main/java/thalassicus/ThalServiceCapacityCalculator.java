@@ -1,18 +1,17 @@
 // ThalServiceCapacityCalculator.java
-// Document Version 1.0.10
+// Document Version 1.0.12
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
 package thalassicus;
 
-import game.boosting.BoostSpec;
 import init.race.RACES;
 import init.race.Race;
 import init.type.HCLASS_RACE;
 import init.type.NEED;
 import init.type.NEEDS;
 import init.type.NEED_E;
-import java.util.Arrays;
+
 import java.util.HashSet;
 import java.util.Set;
 import settlement.main.SETT;
@@ -49,19 +48,27 @@ import util.gui.misc.GText;
 // only one or the other.
 //
 // A service's daily capacity depends on how often subjects actually want to
-// use it relative to every other need competing for their attention. Jake's
-// own formula sums that competition across NEEDS.ALLSIMPLE() only, leaving
-// out Hunger, Thirst, and Shopping (the NEED_E needs) even though a subject's
-// AI weighs every need - simple and event alike - against the same shared
-// pool when deciding what to do next. Widening that sum to NEEDS.ALL() brings
-// the estimate in line with how demand is actually distributed. NEED_E needs
-// map to ordinary RoomServiceAccess-based rooms (Eatery/Hunger, Tavern/
-// Thirst, Market/Shopping - confirmed from their own room data files), so the
-// Present Services check above requires no special-casing for them.
+// use it relative to every other need competing for their attention. This
+// competing total is summed across NEEDS.ALLSIMPLE() specifically, NOT
+// NEEDS.ALL() - confirmed via AIModules.java's module-selection loop, which
+// compares AIModule_Service against AIModule_Consumption (Hunger, Thirst,
+// Shopping's wrapper), AIModule_Danger, AIModule_Work, etc. head-to-head by
+// simple max-priority, once per tick. The NEED_E needs (Hunger, Thirst,
+// Shopping) never enter S_Plans.getPlan()'s rate-weighted lottery at all -
+// they compete at this outer, module-selection layer instead, against Work
+// and Battle, not against Lavatory and Hearth. S_Plans's registered room
+// list matches NEEDS.ALLSIMPLE() exactly, need-for-need, which is why
+// Jake's original scope for this sum was already correct. An earlier
+// version of this class widened the sum to NEEDS.ALL() on the mistaken
+// assumption that a subject weighs every need - simple and event alike -
+// against one shared pool; AIModules.java disproves that directly, and the
+// change was reverted. A real, separate competition effect from Food/Drink/
+// Shop does exist, but it operates on module priority, not a rate sum, and
+// is not modeled here.
 //
 // RoomService.totalMultiplier() is shadowed as a one-line wrapper around
-// correctedCapacityMultipliers(...).allServices() specifically - not
-// presentServices() - so every existing, unknown, or future call site that
+// correctedCapacityMultipliers(...).calibratedTotal() specifically - not
+// presentTotal() - so every existing, unknown, or future call site that
 // assumes totalMultiplier() returns a single double keeps getting exactly
 // the value it was already built and validated against. Present Services is
 // purely additive information, surfaced only where this class's own display
@@ -142,7 +149,7 @@ public class ThalServiceCapacityCalculator {
       System.getenv("APPDATA") + "\\songsofsyx\\logs\\ThalServiceEstimateFix-Capacity.log"
   );
 
-  private static final CharSequence NEED_RATES_HEADER = "Need Rates";
+  private static final CharSequence AVERAGE_DAYS_BETWEEN_VISITS_HEADER = "Average Days Between Visits";
   private static final CharSequence BASE_RATE_LABEL = "Base";
   private static final CharSequence NEVER_LABEL = "Never";
 
@@ -163,10 +170,10 @@ public class ThalServiceCapacityCalculator {
   private static CompetingTotals defaultCompetingTotals;
   private static CompetingTotals[] raceCompetingTotals;
 
-  public record CompetingTotals(double presentServices, double allServices) {
+  public record CompetingTotals(double presentTotal, double calibratedTotal) {
   }
 
-  public record CapacityMultipliers(double presentServices, double allServices) {
+  public record CapacityMultipliers(double presentMultiplier, double calibratedMultiplier) {
   }
 
   public static CapacityMultipliers correctedCapacityMultipliers(RoomService roomService) {
@@ -189,9 +196,9 @@ public class ThalServiceCapacityCalculator {
 
     double rate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
     double visitDurationFactor = ThalServiceVisitDurations.servicePerDay(serviceNeed) * 0.5 * rate * needShare;
-    double presentMultiplier = 1.0 / (visitDurationFactor / totals.presentServices());
-    double allMultiplier = 1.0 / (visitDurationFactor / totals.allServices());
-    return new CapacityMultipliers(presentMultiplier, allMultiplier);
+    double presentMultiplier = 1.0 / (visitDurationFactor / totals.presentTotal());
+    double calibratedMultiplier = 1.0 / (visitDurationFactor / totals.calibratedTotal());
+    return new CapacityMultipliers(presentMultiplier, calibratedMultiplier);
   }
 
   public static void appendDivergenceLines(GBox tooltipBox, NEED serviceNeed) {
@@ -202,7 +209,7 @@ public class ThalServiceCapacityCalculator {
     double baseRate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
     CompetingTotals defaultTotals = getDefaultCompetingTotals();
 
-    tooltipBox.textLL(NEED_RATES_HEADER);
+    tooltipBox.textLL(AVERAGE_DAYS_BETWEEN_VISITS_HEADER);
     tooltipBox.NL();
 
     tooltipBox.textL(BASE_RATE_LABEL);
@@ -227,10 +234,10 @@ public class ThalServiceCapacityCalculator {
 
   private static void appendExpectedDaysPair(GBox tooltipBox, double numerator, CompetingTotals totals) {
     GText valueText = tooltipBox.text();
-    appendExpectedDays(valueText, numerator, totals.presentServices());
+    appendExpectedDays(valueText, numerator, totals.presentTotal());
     valueText.s();
     valueText.add('(');
-    appendExpectedDays(valueText, numerator, totals.allServices());
+    appendExpectedDays(valueText, numerator, totals.calibratedTotal());
     valueText.add(')');
     valueText.normalify();
     tooltipBox.add(valueText);
@@ -328,21 +335,21 @@ public class ThalServiceCapacityCalculator {
     ensureCacheCurrent();
     if (defaultCompetingTotals == null) {
       double presentTotal = 0.0;
-      double allTotal = 0.0;
+      double calibratedTotal = 0.0;
       Set<String> countedNeedKeys = new HashSet<>();
-      for (NEED competingNeed : NEEDS.ALL()) {
-        // Guards against NEEDS.ALL() potentially containing duplicate entries
-        // for the same NEED (unconfirmed either way from source), so a rate
-        // is never summed twice regardless of which case is actually true.
+      for (NEED competingNeed : NEEDS.ALLSIMPLE()) {
+        // Guards against NEEDS.ALLSIMPLE() potentially containing duplicate
+        // entries for the same NEED (unconfirmed either way from source), so
+        // a rate is never summed twice regardless of which case is true.
         if (countedNeedKeys.add(competingNeed.key)) {
           double rate = competingNeed.rate.get(HCLASS_RACE.clP(null, null));
-          allTotal += rate;
+          calibratedTotal += rate;
           if (presentNeedKeys.contains(competingNeed.key)) {
             presentTotal += rate;
           }
         }
       }
-      defaultCompetingTotals = new CompetingTotals(presentTotal, allTotal);
+      defaultCompetingTotals = new CompetingTotals(presentTotal, calibratedTotal);
     }
     return defaultCompetingTotals;
   }
@@ -351,18 +358,18 @@ public class ThalServiceCapacityCalculator {
     ensureCacheCurrent();
     if (raceCompetingTotals[race.index()] == null) {
       double presentTotal = 0.0;
-      double allTotal = 0.0;
+      double calibratedTotal = 0.0;
       Set<String> countedNeedKeys = new HashSet<>();
-      for (NEED competingNeed : NEEDS.ALL()) {
+      for (NEED competingNeed : NEEDS.ALLSIMPLE()) {
         if (countedNeedKeys.add(competingNeed.key)) {
           double rate = race.bvalue(competingNeed.rate);
-          allTotal += rate;
+          calibratedTotal += rate;
           if (presentNeedKeys.contains(competingNeed.key)) {
             presentTotal += rate;
           }
         }
       }
-      raceCompetingTotals[race.index()] = new CompetingTotals(presentTotal, allTotal);
+      raceCompetingTotals[race.index()] = new CompetingTotals(presentTotal, calibratedTotal);
     }
     return raceCompetingTotals[race.index()];
   }
