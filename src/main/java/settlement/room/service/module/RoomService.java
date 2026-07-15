@@ -145,7 +145,7 @@ public abstract class RoomService {
    // where this class's tooltip-building code calls
    // correctedCapacityMultipliers(...) directly, not through this method.
    public double totalMultiplier() {
-      return ThalServiceCapacityCalculator.correctedCapacityMultipliers(this).allServices();
+      return ThalServiceCapacityCalculator.correctedCapacityMultipliers(this).calibratedMultiplier();
    }
 
    public abstract FSERVICE service(int var1, int var2);
