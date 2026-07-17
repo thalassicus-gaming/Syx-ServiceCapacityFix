@@ -26,7 +26,6 @@ import thalassicus.util.ThalsLogger;
 import util.gui.misc.GBox;
 import util.gui.misc.GText;
 import util.info.GFORMAT;
-import view.sett.ui.room.ModuleService;
 
 //
 // ============================================================================
