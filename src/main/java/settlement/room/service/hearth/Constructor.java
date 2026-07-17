@@ -24,7 +24,7 @@ import settlement.room.sprite.RoomSpriteCombo;
 import snake2d.SPRITE_RENDERER;
 import snake2d.util.datatypes.DIR;
 import snake2d.util.file.Json;
-import thalassicus.ThalServiceFurnisherStat;
+import thalassicus.util.ThalServiceFurnisherStat;
 import util.rendering.RenderData;
 import util.rendering.ShadowBatch;
 

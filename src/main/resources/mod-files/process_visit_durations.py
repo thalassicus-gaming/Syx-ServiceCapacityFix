@@ -1,15 +1,35 @@
 # process_visit_durations.py
-# Document Version 1.0.1
+# Document Version 2.0.0
 # Creation date: 2026/07/13
 # Creator: Thalassicus
 #
-# Reads the raw per-room visit-duration bundle (visit-duration-source-data.json,
+# Reads the raw per-room visit-duration bundle (thal-visit-duration-source-data.json,
 # hand-assembled from the decompiled AI plan classes) and produces a small,
-# final data file mapping each analyzed room to a single visit-duration figure,
-# picked according to that room's recorded strategy (measured_average / minimum
-# / maximum), expressed both in raw seconds and as a ratio against a reference
-# room. The reference room is Lavatory, since its estimate has already been
-# checked against real gameplay.
+# final data file mapping each room's real in-game blueprint key
+# (confirmedBlueprintKey) to a single visit-duration figure, picked according
+# to that room's recorded strategy (measured_average / minimum / maximum),
+# expressed both in raw seconds and as a ratio against a reference room. The
+# reference room is Lavatory, since its estimate has already been checked
+# against real gameplay.
+#
+# Keyed by confirmedBlueprintKey, not needKey and not blueprintClass (the
+# Java class name) - this supersedes an earlier version of this script that
+# keyed by needKey, which broke down once Temple confirmed multiple
+# blueprints (one per religion) can share a single NEED with genuinely
+# distinct data. Every room in the source bundle is now expected to declare
+# confirmedBlueprintKey explicitly (null only for rooms with no real
+# blueprint at all, e.g. Skinnydip).
+#
+# Two distinct "no data" cases are handled differently, on purpose:
+#   - confirmedBlueprintKey is null (no blueprint exists at all): the room
+#     is informational only and does not appear in the output "rooms" dict -
+#     there is no key to look it up by in the first place.
+#   - confirmedBlueprintKey is a real string, but no strategy could compute
+#     a duration (e.g. a "no_data" room like Hospital, Canteen, Eatery, or
+#     Court): the room STILL appears in "rooms", with an explicit -1
+#     sentinel, so a caller looking up that real key gets a clear,
+#     acknowledged "no data" signal rather than a silent miss indistinguishable
+#     from a key nobody ever registered at all.
 #
 # This script is meant to be re-run whenever the source bundle is updated
 # (new rooms analyzed, measured averages replacing assumed ranges, etc.)
@@ -24,7 +44,7 @@ REFERENCE_ROOM_LABEL = "Lavatory"
 def pick_seconds(room):
     """Selects the single visit-duration figure for a room, based on its
     recommended strategy. Returns None if the room has no numeric range at
-    all (e.g. Skinnydip, which isn't a constructed room)."""
+    all, or if its strategy (e.g. "no_data") has no computable figure."""
     duration_range = room.get("totalVisitSecondsAssumedRange")
     if duration_range is None:
         return None
@@ -40,7 +60,8 @@ def pick_seconds(room):
     elif strategy == "measured_average":
         return (minimum_seconds + maximum_seconds) / 2.0
     else:
-        # exclude_or_default, or any future strategy we haven't handled yet.
+        # no_data, exclude_or_default, or any future strategy we haven't
+        # handled yet.
         return None
 
 
@@ -58,15 +79,41 @@ def build_output(source_bundle):
     excluded_rooms = []
 
     for room in source_bundle["rooms"]:
-        chosen_seconds = pick_seconds(room)
-        if chosen_seconds is None:
+        blueprint_key = room.get("confirmedBlueprintKey")
+
+        if blueprint_key is None:
+            # No real blueprint at all (e.g. Skinnydip) - the blueprint-keyed
+            # lookup structure below simply does not apply, so this room is
+            # informational only, not emitted into "rooms" at all.
             excluded_rooms.append({
                 "roomLabel": room["roomLabel"],
-                "reason": room.get("strategyReason", "no numeric duration available"),
+                "reason": room.get("strategyReason", "no blueprint key exists for this room"),
             })
             continue
 
-        output_rooms[room["needKey"]] = {
+        if blueprint_key in output_rooms:
+            raise ValueError(
+                f"Duplicate confirmedBlueprintKey '{blueprint_key}' "
+                f"(rooms '{output_rooms[blueprint_key]['roomLabel']}' and '{room['roomLabel']}'). "
+                f"Each blueprint key must appear at most once - this likely indicates a data-entry mistake, "
+                f"not an expected shared-mechanics case (Temple/Shrine's shared-per-religion values still get "
+                f"one row PER blueprint key, e.g. TEMPLE_ATHURI and TEMPLE_CRATOR are different keys)."
+            )
+
+        chosen_seconds = pick_seconds(room)
+        if chosen_seconds is None:
+            # A real blueprint key exists, but no strategy could compute a
+            # duration for it. Emitted as an explicit -1 sentinel rather than
+            # omitted - see the module docstring above.
+            output_rooms[blueprint_key] = {
+                "roomLabel": room["roomLabel"],
+                "strategyUsed": room.get("recommendedStrategy", "no_data"),
+                "visitSeconds": -1,
+                "durationRatioToReference": -1,
+            }
+            continue
+
+        output_rooms[blueprint_key] = {
             "roomLabel": room["roomLabel"],
             "strategyUsed": room["recommendedStrategy"],
             "visitSeconds": round(chosen_seconds, 3),
@@ -74,7 +121,7 @@ def build_output(source_bundle):
         }
 
     return {
-        "note": "Generated by process_visit_durations.py. Keys are the source bundle's needKey values, matching each room's actual NEED.key in-game (e.g. CONSTIPATION for Lavatory, _SHRINE for Shrine) - not blueprintClass or RoomBlueprintImp.key.",
+        "note": "Generated by process_visit_durations.py. Keys are the real in-game blueprint key for every room (confirmedBlueprintKey) - not needKey and not the Java class name (blueprintClass). A visitSeconds of -1 means a real blueprint key exists but no measured or derived data does yet - callers should treat -1 as an explicit, acknowledged gap (fall back to vanilla behavior) rather than a real duration, distinct from a key being entirely absent from this file (which would indicate a blueprint this file has never been told about at all).",
         "referenceRoom": REFERENCE_ROOM_LABEL,
         "referenceRoomSeconds": round(reference_seconds, 3),
         "rooms": output_rooms,
@@ -100,12 +147,15 @@ def main():
     print(f"Wrote {len(output_data['rooms'])} room(s) to {output_path}")
     print(f"Reference room: {output_data['referenceRoom']} "
           f"({output_data['referenceRoomSeconds']}s)")
-    for need_key, room_data in output_data["rooms"].items():
-        print(f"  {need_key}: {room_data['visitSeconds']}s "
-              f"(x{room_data['durationRatioToReference']}, "
-              f"{room_data['strategyUsed']})")
+    for blueprint_key, room_data in output_data["rooms"].items():
+        if room_data["visitSeconds"] == -1:
+            print(f"  {blueprint_key}: NO DATA ({room_data['roomLabel']})")
+        else:
+            print(f"  {blueprint_key}: {room_data['visitSeconds']}s "
+                  f"(x{room_data['durationRatioToReference']}, "
+                  f"{room_data['strategyUsed']})")
     if output_data["excludedRooms"]:
-        print("Excluded (no numeric strategy applied):")
+        print("Excluded entirely (no blueprint key exists at all):")
         for excluded in output_data["excludedRooms"]:
             print(f"  {excluded['roomLabel']}: {excluded['reason']}")
 

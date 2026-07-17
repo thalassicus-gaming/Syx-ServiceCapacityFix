@@ -5,14 +5,16 @@
     "RND.rInt(n) is assumed to behave like java.util.Random.nextInt(n): an integer uniformly distributed over [0, n-1] inclusive. This assumption is not confirmed from source; if wrong, all min/max/avg figures below shift accordingly.",
     "The unit of numeric arguments to methods like AI.SUBS().STAND.activateTime(a, d, N), AI.SUBS().single.activate(a, d, state, N), and AI.STATES().LAY.activateTime(a, d, N) is assumed to be seconds, based on context and naming, but is not confirmed from source. If it is ticks or some other unit, all figures below need a conversion factor.",
     "Figures below describe the structure of each loop (iteration counts, per-iteration duration formulas) as literally coded. True empirical averages, especially for rooms with state-dependent branching (Hearth, Temple), should be measured in a live game via logging rather than derived analytically, since real branch frequency depends on live room congestion, not just the RNG.",
-    "Only the rooms below have been analyzed. Barber, Brothel, Court, and the spectator-style rooms (Speaker, Stock, Stage, Arena, Arenag, Garena/Fightpit) have not yet been pulled or reviewed (their AI plan classes are M_PlanBarber.java, M_PlanBrothel.java, M_PlanCourt.java, M_PlanSpectator.java).",
     "AI.SUBS().STAND.activateRndDir(a, d, N) (used by Barber and Brothel) is a different method than any duration call confirmed elsewhere (e.g. AI.STATES().STAND.aDirRND, used by Bath, or AI.STATES().STAND.activateTime, used by Hearth/Physician/Shrine/Temple). Whether its trailing integer argument is seconds, a direction/rotation parameter, or something else is not confirmed from source; Barber and Brothel's figures treat it as seconds by analogy only.",
-    "M_PlanSpectator.java (Speaker, Stage, Stocks, Arena/Fightpit, Garena/Arenag) uses a fixed initial countdown followed by a probabilistic per-pass exit (a 1-in-5 chance once the countdown reaches zero, or an external 'AI module can no longer continue' condition), a structurally different shape from every other room's fixed-loop-count pattern. The figure recorded is an expected-value calculation (geometric distribution), not a true min/max range."
+    "M_PlanSpectator.java (Speaker, Stage, Stocks, Arena/Fightpit, Garena/Arenag) uses a fixed initial countdown followed by a probabilistic per-pass exit (a 1-in-5 chance once the countdown reaches zero, or an external 'AI module can no longer continue' condition), a structurally different shape from every other room's fixed-loop-count pattern. The figure recorded is an expected-value calculation (geometric distribution), not a true min/max range.",
+    "confirmedBlueprintKey is the real in-game blueprint key string (what RoomBlueprintImp.key actually resolves to), distinct from blueprintClass (the Java class name, e.g. ROOM_LAVATORY) - these were previously conflated in places, which caused a real bug (Temple's original single NEED-keyed entry silently missed that four separate blueprints share one NEED). Every entry below now carries both fields; process_visit_durations.py keys its output by confirmedBlueprintKey, not needKey and not blueprintClass.",
+    "Canteen, Eatery, Market, and Tavern's figures rely on three explicitly stated, non-derivable player-knowledge assumptions rather than fixed source constants: MEALS_PER_VISIT=1, DRINKS_PER_TAVERN_VISIT=2, RESOURCES_BOUGHT_PER_MARKET_VISIT=4. All three were verified via a one-off Monte Carlo simulation script (simulate_food_drink_shop_durations.py, not part of the regular processing pipeline) and cross-checked analytically; see each room's own visitPhases notes for the specific derivation."
   ],
   "rooms": [
     {
       "roomLabel": "Lavatory",
       "blueprintClass": "ROOM_LAVATORY",
+      "confirmedBlueprintKey": "LAVATORY_NORMAL",
       "aiPlanFile": "M_PlanLavatory.java",
       "needKey": "CONSTIPATION",
       "congestionAware": false,
@@ -42,6 +44,7 @@
     {
       "roomLabel": "Well",
       "blueprintClass": "ROOM_WELL",
+      "confirmedBlueprintKey": "WELL_NORMAL",
       "aiPlanFile": "M_PlanWell.java",
       "needKey": "WELL",
       "congestionAware": false,
@@ -63,6 +66,7 @@
     {
       "roomLabel": "Bath",
       "blueprintClass": "ROOM_BATH",
+      "confirmedBlueprintKey": "BATH_NORMAL",
       "aiPlanFile": "M_PlanBath.java",
       "needKey": "BATH",
       "congestionAware": false,
@@ -92,6 +96,7 @@
     {
       "roomLabel": "Hearth",
       "blueprintClass": "ROOM_HEARTH",
+      "confirmedBlueprintKey": "_HEARTH",
       "aiPlanFile": "M_PlanHearth.java",
       "needKey": "HEARTH",
       "congestionAware": true,
@@ -117,6 +122,7 @@
     {
       "roomLabel": "Physician",
       "blueprintClass": "ROOM_PHYSICIAN",
+      "confirmedBlueprintKey": "PHYSICIAN_NORMAL",
       "aiPlanFile": "M_PlanPhysician.java",
       "needKey": "DOCTOR",
       "congestionAware": false,
@@ -133,42 +139,99 @@
       "strategyReason": "Fixed, deterministic duration; the 'measured average' and the coded constant should be identical, so this is really just a confirmation case."
     },
     {
-      "roomLabel": "Shrine",
+      "roomLabel": "Shrine (Athuri)",
       "blueprintClass": "ROOM_SHRINE",
+      "confirmedBlueprintKey": "SHRINE_ATHURI",
       "aiPlanFile": "S_PlanShrine.java",
       "needKey": "_SHRINE",
       "congestionAware": false,
+      "blueprintKeyStatus": "S_PlanShrine.java confirms one shared plan class handles every religion's Shrine identically, so this entry, SHRINE_CRATOR, SHRINE_SHMALOR, and SHRINE_AMINION below all share the identical value - separate entries by design, matching Temple. The exact key name is by analogy to the confirmed TEMPLE_<religion> convention, not independently verified via an actual SHRINE_ATHURI.txt file.",
       "visitPhases": [
         {
           "phaseLabel": "praying",
           "actionType": "alternates AI.STATES().anima.lay, anima.carry, anima.stand via single.activate",
-          "iterationFormula": "d.planByte1 initialized to 5 + RND.rInt(10), decremented once per pass, each pass 4 + RND.rInt(4) seconds",
-          "iterationCountAssumedRange": {"min": 5, "max": 14},
-          "secondsPerIterationAssumedRange": {"min": 4, "max": 7},
-          "totalSecondsAssumedRange": {"min": 20, "max": 98},
-          "totalSecondsRoughAverage": 52
+          "iterationFormula": "d.planByte1 initialized to 5 + RND.rInt(10), decremented once per pass (the very first res() call, invoked directly from setAction, performs the first decrement), loop continues while the decremented value is > 0, each continuing pass 4 + RND.rInt(4) seconds. No congestion throttle exists for Shrine (unlike Temple), so this is the room's one true duration, not a min/max choice.",
+          "note": "Confirmed via direct simulation AND analytically via Wald's identity (E[total] = (E[initial countdown] - 1) * E[per-pass duration] = (9.5 - 1) * 5.5 = 46.75).",
+          "totalSecondsConfirmed": 46.75
         }
       ],
-      "totalVisitSecondsAssumedRange": {"min": 20, "max": 98},
+      "totalVisitSecondsAssumedRange": {"min": 46.75, "max": 46.75},
       "recommendedStrategy": "measured_average",
-      "strategyReason": "No safety asymmetry identified; Shrine does not appear to be a scarcity-critical building the way Hearth is."
+      "strategyReason": "No safety asymmetry identified; Shrine does not appear to be a scarcity-critical building the way Hearth is. No congestion throttle exists in source for Shrine at all, so unlike Temple, there is no min/max choice to make here - this is simply the room's one real duration."
     },
     {
-      "roomLabel": "Temple",
-      "blueprintClass": "ROOM_TEMPLE",
+      "roomLabel": "Shrine (Crator)",
+      "blueprintClass": "ROOM_SHRINE",
+      "confirmedBlueprintKey": "SHRINE_CRATOR",
+      "aiPlanFile": "S_PlanShrine.java",
+      "needKey": "_SHRINE",
+      "congestionAware": false,
+      "blueprintKeyStatus": "See Shrine (Athuri)'s entry above for the full shared-mechanics derivation - identical value, separate entry by design. Key name not independently verified via SHRINE_CRATOR.txt.",
+      "visitPhases": [
+        {
+          "phaseLabel": "praying",
+          "actionType": "identical mechanics to Shrine (Athuri); see that entry for the full breakdown",
+          "totalSecondsConfirmed": 46.75
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 46.75, "max": 46.75},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "See Shrine (Athuri)'s entry for the shared S_PlanShrine.java mechanics and reasoning."
+    },
+    {
+      "roomLabel": "Shrine (Shmalor)",
+      "blueprintClass": "ROOM_SHRINE",
+      "confirmedBlueprintKey": "SHRINE_SHMALOR",
+      "aiPlanFile": "S_PlanShrine.java",
+      "needKey": "_SHRINE",
+      "congestionAware": false,
+      "blueprintKeyStatus": "See Shrine (Athuri)'s entry above for the full shared-mechanics derivation - identical value, separate entry by design. Key name not independently verified via SHRINE_SHMALOR.txt.",
+      "visitPhases": [
+        {
+          "phaseLabel": "praying",
+          "actionType": "identical mechanics to Shrine (Athuri); see that entry for the full breakdown",
+          "totalSecondsConfirmed": 46.75
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 46.75, "max": 46.75},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "See Shrine (Athuri)'s entry for the shared S_PlanShrine.java mechanics and reasoning."
+    },
+    {
+      "roomLabel": "Shrine (Aminion)",
+      "blueprintClass": "ROOM_SHRINE",
+      "confirmedBlueprintKey": "SHRINE_AMINION",
+      "aiPlanFile": "S_PlanShrine.java",
+      "needKey": "_SHRINE",
+      "congestionAware": false,
+      "blueprintKeyStatus": "See Shrine (Athuri)'s entry above for the full shared-mechanics derivation - identical value, separate entry by design. Key name not independently verified via SHRINE_AMINION.txt.",
+      "visitPhases": [
+        {
+          "phaseLabel": "praying",
+          "actionType": "identical mechanics to Shrine (Athuri); see that entry for the full breakdown",
+          "totalSecondsConfirmed": 46.75
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 46.75, "max": 46.75},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "See Shrine (Athuri)'s entry for the shared S_PlanShrine.java mechanics and reasoning."
+    },
+    {
+      "roomLabel": "Temple (Athuri)",
+      "blueprintClass": "TEMPLE_ATHURI",
+      "confirmedBlueprintKey": "TEMPLE_ATHURI",
       "aiPlanFile": "S_PlanTemple.java",
       "needKey": "_TEMPLE",
       "congestionAware": true,
+      "blueprintKeyStatus": "Confirmed directly from TEMPLE_ATHURI.txt. S_PlanTemple.java confirms one shared plan class handles every religion's Temple identically, so this entry, TEMPLE_CRATOR, TEMPLE_SHMALOR, and TEMPLE_AMINION below all share the identical value - stored as separate per-blueprint entries specifically to keep the eventual Java lookup uniform (always look up by blueprint key, no NEED-level special-casing needed), per an explicit design decision to prefer that simplicity even where the underlying value happens to be identical across entries.",
       "congestionMechanism": "res() checks temp(d).service().available() < temp(d).service().total() / 4 each pass; if availability drops below 25%, the subject leaves the reserved tile early (moves to a separate 'next' loitering phase that does not hold the service reservation).",
       "visitPhases": [
         {
-          "phaseLabel": "praying (occupies the actual service slot)",
+          "phaseLabel": "praying (occupies the actual service slot), assuming the congestion throttle above triggers after exactly one pass",
           "actionType": "alternates AI.STATES().anima.lay, anima.carry, anima.stand via single.activate",
-          "iterationFormula": "d.planByte1 initialized to 5 + RND.rInt(10), decremented once per pass, each pass 4 + RND.rInt(4) seconds, subject to the congestion early-exit above",
-          "iterationCountAssumedRange": {"min": 5, "max": 14},
-          "secondsPerIterationAssumedRange": {"min": 4, "max": 7},
-          "totalSecondsAssumedRange": {"min": 20, "max": 98},
-          "totalSecondsRoughAverage": 52
+          "iterationFormula": "the first res() call (from setAction) always completes at least one full pass (4 + RND.rInt(4) seconds) before the throttle can plausibly apply, since availability at the moment a subject begins praying was necessarily nonzero; the 'minimum' strategy models the throttle catching the visit on the very next check after that one pass, rather than ignoring the throttle and running the full un-throttled countdown (which would be closer to a maximum-style estimate, the opposite of the chosen strategy)",
+          "totalSecondsConfirmed": 5.5,
+          "note": "This corrects an earlier version of this file, which computed 'minimum' as the theoretical floor of the full countdown's range (5 iterations x 4s = 20s) without modeling the congestion throttle actually cutting the visit short after roughly one pass. Re-derived directly from a description of the intended failure mode: a chronically busy Temple should exit after a single visit step, not run a full but minimally-rolled countdown."
         },
         {
           "phaseLabel": "loitering after leaving the reserved tile (does not hold the service reservation)",
@@ -176,23 +239,82 @@
           "note": "Should NOT be counted toward Temple's visit-duration correction, since it happens after the service slot reservation has already been released."
         }
       ],
-      "totalVisitSecondsAssumedRange": {"min": 20, "max": 98},
+      "totalVisitSecondsAssumedRange": {"min": 5.5, "max": 5.5},
       "recommendedStrategy": "minimum",
       "strategyReason": "User-specified: a city typically has only one Temple per religion that the whole city shares, so true capacity is far beyond realistic demand and congestion is not a practical concern. Using the minimum (fastest, congestion-avoidant) duration reflects how the room actually behaves in practice, and there is no safety downside to the optimistic figure here."
     },
     {
+      "roomLabel": "Temple (Crator)",
+      "blueprintClass": "TEMPLE_CRATOR",
+      "confirmedBlueprintKey": "TEMPLE_CRATOR",
+      "aiPlanFile": "S_PlanTemple.java",
+      "needKey": "_TEMPLE",
+      "congestionAware": true,
+      "blueprintKeyStatus": "Confirmed directly from TEMPLE_CRATOR.txt. See the Temple (Athuri) entry above for the full shared-mechanics derivation - identical value, separate entry by design.",
+      "visitPhases": [
+        {
+          "phaseLabel": "praying plus congestion throttle",
+          "actionType": "identical mechanics to Temple (Athuri); see that entry for the full breakdown",
+          "totalSecondsConfirmed": 5.5
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 5.5, "max": 5.5},
+      "recommendedStrategy": "minimum",
+      "strategyReason": "See Temple (Athuri)'s entry for the shared S_PlanTemple.java mechanics and reasoning."
+    },
+    {
+      "roomLabel": "Temple (Shmalor)",
+      "blueprintClass": "TEMPLE_SHMALOR",
+      "confirmedBlueprintKey": "TEMPLE_SHMALOR",
+      "aiPlanFile": "S_PlanTemple.java",
+      "needKey": "_TEMPLE",
+      "congestionAware": true,
+      "blueprintKeyStatus": "Confirmed directly from TEMPLE_SHMALOR.txt. See the Temple (Athuri) entry above for the full shared-mechanics derivation - identical value, separate entry by design.",
+      "visitPhases": [
+        {
+          "phaseLabel": "praying plus congestion throttle",
+          "actionType": "identical mechanics to Temple (Athuri); see that entry for the full breakdown",
+          "totalSecondsConfirmed": 5.5
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 5.5, "max": 5.5},
+      "recommendedStrategy": "minimum",
+      "strategyReason": "See Temple (Athuri)'s entry for the shared S_PlanTemple.java mechanics and reasoning."
+    },
+    {
+      "roomLabel": "Temple (Aminion)",
+      "blueprintClass": "TEMPLE_AMINION",
+      "confirmedBlueprintKey": "TEMPLE_AMINION",
+      "aiPlanFile": "S_PlanTemple.java",
+      "needKey": "_TEMPLE",
+      "congestionAware": true,
+      "blueprintKeyStatus": "Confirmed directly from TEMPLE_AMINION.txt. See the Temple (Athuri) entry above for the full shared-mechanics derivation - identical value, separate entry by design.",
+      "visitPhases": [
+        {
+          "phaseLabel": "praying plus congestion throttle",
+          "actionType": "identical mechanics to Temple (Athuri); see that entry for the full breakdown",
+          "totalSecondsConfirmed": 5.5
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 5.5, "max": 5.5},
+      "recommendedStrategy": "minimum",
+      "strategyReason": "See Temple (Athuri)'s entry for the shared S_PlanTemple.java mechanics and reasoning."
+    },
+    {
       "roomLabel": "Skinnydip",
       "blueprintClass": "not a constructed room; uses SETT.PATH().finders.water directly",
+      "confirmedBlueprintKey": null,
       "aiPlanFile": "PlanSkinny.java",
       "needKey": "_SKINNYDIP",
       "congestionAware": false,
-      "note": "This need is fulfilled at arbitrary open-water tiles rather than a purpose-built room, so a per-room visit-duration correction may not be a meaningful concept here. Flagged for a decision on whether to include it at all rather than analyzed in full detail.",
+      "note": "This need is fulfilled at arbitrary open-water tiles rather than a purpose-built room, so a per-room visit-duration correction may not be a meaningful concept here. Has no blueprint key at all - the blueprint-keyed lookup structure in the final processed file does not apply to it.",
       "recommendedStrategy": "exclude_or_default",
       "strategyReason": "Not a constructed service room; unclear whether the mod's room-keyed correction mechanism applies to it at all."
     },
     {
       "roomLabel": "Barber",
       "blueprintClass": "ROOM_BARBER",
+      "confirmedBlueprintKey": "BARBER_NORMAL",
       "aiPlanFile": "M_PlanBarber.java",
       "needKey": "GROOMING",
       "needKeyConfidence": "Inferred, not confirmed from a room data file. GROOMING is the only NEED file not yet tied to any analyzed room and thematically fits Barber; should be confirmed against BARBER's own room data file (SERVICE: { NEED: ... }) before being fully trusted.",
@@ -215,6 +337,7 @@
     {
       "roomLabel": "Brothel",
       "blueprintClass": "ROOM_PLEASURE",
+      "confirmedBlueprintKey": "PLEASURE_NORMAL",
       "aiPlanFile": "M_PlanBrothel.java",
       "needKey": "MASSAGE",
       "needKeyConfidence": "Inferred, not confirmed from a room data file. MASSAGE is the only remaining unclaimed NEED file and thematically fits Brothel; should be confirmed against PLEASURE's own room data file before being fully trusted.",
@@ -245,10 +368,11 @@
     {
       "roomLabel": "Court",
       "blueprintClass": "ROOM_COURT",
+      "confirmedBlueprintKey": "_COURT",
       "aiPlanFile": "M_PlanCourt.java",
       "needKey": "COURT",
       "congestionAware": false,
-      "note": "User-confirmed dead code in the current game version; Jake reportedly plans to eventually route Nobles to this room via the throne room instead. Neither AI.SUBS().STAND.activate(a, d) nor AI.SUBS().STAND.activateRndDir(a, d) in this file take an explicit duration argument, unlike every other analyzed room, so there is no source basis for even a rough seconds estimate.",
+      "note": "User-confirmed dead code in the current game version; Jake reportedly plans to eventually route Nobles to this room via the throne room instead. Neither AI.SUBS().STAND.activate(a, d) nor AI.SUBS().STAND.activateRndDir(a, d) in this file take an explicit duration argument, unlike every other analyzed room, so there is no source basis for even a rough seconds estimate. Blueprint key confirmed directly from this mod's own diagnostic log (Room check: need=COURT, blueprintKey=_COURT) - note it does NOT match needKey ('COURT', no underscore), an early instance of exactly the needKey/blueprintKey conflation this file's confirmedBlueprintKey field now exists to prevent.",
       "visitPhases": [
         {
           "phaseLabel": "standing (duration mechanism not exposed by this file)",
@@ -257,12 +381,13 @@
           "iterationCountAssumedRange": {"min": 4, "max": 11}
         }
       ],
-      "recommendedStrategy": "exclude_or_default",
-      "strategyReason": "Dead code in the current game version, and insufficient source information to estimate per-iteration duration even roughly. No correction should be attempted; falls back to TIME.servicePerDay() like any other unanalyzed room."
+      "recommendedStrategy": "no_data",
+      "strategyReason": "Dead code in the current game version, and insufficient source information to estimate per-iteration duration even roughly. No correction should be attempted; falls back to vanilla behavior like any other unanalyzed room."
     },
     {
       "roomLabel": "Speaker",
       "blueprintClass": "ROOM_SPEAKER",
+      "confirmedBlueprintKey": "SPEAKER_NORMAL",
       "aiPlanFile": "M_PlanSpectator.java",
       "needKey": "SPEAKER",
       "congestionAware": false,
@@ -291,6 +416,7 @@
     {
       "roomLabel": "Stage",
       "blueprintClass": "ROOM_STAGE",
+      "confirmedBlueprintKey": "STAGE_NORMAL",
       "aiPlanFile": "M_PlanSpectator.java",
       "needKey": "STAGE",
       "congestionAware": false,
@@ -309,6 +435,7 @@
     {
       "roomLabel": "Stocks",
       "blueprintClass": "ROOM_STOCKS",
+      "confirmedBlueprintKey": "_STOCKS",
       "aiPlanFile": "M_PlanSpectator.java",
       "needKey": "STOCKS",
       "congestionAware": false,
@@ -327,6 +454,7 @@
     {
       "roomLabel": "Fight Pit",
       "blueprintClass": "ROOM_FIGHTPIT",
+      "confirmedBlueprintKey": "FIGHTPIT_NORMAL",
       "aiPlanFile": "M_PlanSpectator.java",
       "needKey": "ARENA",
       "congestionAware": false,
@@ -345,6 +473,7 @@
     {
       "roomLabel": "Grand Arena",
       "blueprintClass": "ROOM_ARENA",
+      "confirmedBlueprintKey": "ARENAG_NORMAL",
       "aiPlanFile": "M_PlanSpectator.java",
       "needKey": "ARENAG",
       "congestionAware": false,
@@ -359,6 +488,103 @@
       "totalSecondsRoughAverage": 165,
       "recommendedStrategy": "measured_average",
       "strategyReason": "No safety asymmetry identified. See Speaker's entry for the shared M_PlanSpectator.java mechanics and caveats."
+    },
+    {
+      "roomLabel": "Hospital",
+      "blueprintClass": "unknown - not yet pulled",
+      "confirmedBlueprintKey": "_HOSPITAL",
+      "aiPlanFile": "unknown - not yet pulled",
+      "needKey": null,
+      "congestionAware": false,
+      "note": "Not yet researched at all - no AI plan file for Hospital has been pulled, and it may not even be NEED-driven the same way (Hospital appears to be tied to STATS.WORK().incap/AIModule_Health rather than an ordinary NEED, based on earlier unrelated research in this project). Key name assumed by analogy to the confirmed singleton-room underscore convention (_HEARTH, _STOCKS, _COURT), not independently confirmed via a log line the way _COURT was.",
+      "recommendedStrategy": "no_data",
+      "strategyReason": "No source has been reviewed for this room at all."
+    },
+    {
+      "roomLabel": "Canteen",
+      "blueprintClass": "ROOM_CANTEEN",
+      "confirmedBlueprintKey": "CANTEEN_NORMAL",
+      "aiPlanFile": "F_SPlanCanteen.java",
+      "needKey": "_HUNGER",
+      "congestionAware": false,
+      "visitPhases": [
+        {
+          "phaseLabel": "eating at a table (chair-found path, eatTable resumer)",
+          "actionType": "repeated calls to the shared 'eat' AISUB (AIModule_Food.java: a fixed 4-step sequence alternating AI.STATES().STAND(1.5+RND.rFloat(4.0)) and anima.box(2.5+RND.rFloat(2.0)), mean 14.0s per call)",
+          "iterationFormula": "setAction() makes one unconditional eat.activate() call, then res() decrements d.planByte1 (initialized to 4 + RND.rInt(10)) once per completed eat cycle, continuing while the decremented value is >= 0; total eat calls confirmed via both Monte Carlo simulation (200,000 trials) and Wald's identity (E[calls] = E[initial countdown] + 1 = 8.5 + 1 = 9.5) to average 9.5 calls",
+          "note": "Chair-seeking/table-walking overhead (walkTable/walkLast resumers) deliberately excluded as travel time, per this project's standing zero-travel-time convention. The no-chair-found fallback path (a single unconditional eat.activate(), no countdown loop at all) is a genuinely shorter, different path not modeled here - this entry assumes the more common sit-down case.",
+          "totalSecondsConfirmed": 133.0
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 133.0, "max": 133.0},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "No safety asymmetry identified. Assumes 1 meal per visit (MEALS_PER_VISIT=1, a stated player-knowledge assumption matching the most common food-slider setting, not derivable from source), so the restart-if-still-hungry branch is never exercised."
+    },
+    {
+      "roomLabel": "Eatery",
+      "blueprintClass": "ROOM_EATERY",
+      "confirmedBlueprintKey": "EATERY_NORMAL",
+      "aiPlanFile": "F_SPlanEatery.java",
+      "needKey": "_HUNGER",
+      "congestionAware": false,
+      "visitPhases": [
+        {
+          "phaseLabel": "eating (no chair-seeking mechanic exists in this file at all)",
+          "actionType": "one call to the shared 'eat' AISUB (see Canteen's entry for the confirmed 4-step, 14.0s-mean breakdown)",
+          "iterationFormula": "first.setAction() returns exactly one eat.activate() call, unconditionally; first.res() may restart the entire cycle via init(a, d) if NEEDS.TYPES().HUNGER.stat().getPrio(a) > 0 afterward",
+          "note": "Assumes 1 meal per visit (MEALS_PER_VISIT=1, a stated player-knowledge assumption, not derivable from source), so the restart branch is never exercised - this is simply the one confirmed eat-cycle mean, 14.0s exactly (3.5s average per each of 4 fixed steps).",
+          "totalSecondsConfirmed": 14.0
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 14.0, "max": 14.0},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "No safety asymmetry identified. Fixed, deterministic 4-step structure with only per-step randomness, so the analytic mean and any large-sample simulated average are effectively identical."
+    },
+    {
+      "roomLabel": "Market",
+      "blueprintClass": "ROOM_MARKET",
+      "confirmedBlueprintKey": "MARKET_NORMAL",
+      "aiPlanFile": "M_PlanMarket.java",
+      "needKey": "_SHOPPING",
+      "congestionAware": false,
+      "visitPhases": [
+        {
+          "phaseLabel": "initial browsing",
+          "actionType": "AI.SUBS().STAND.activateRndDir(a, d, 5) - a fixed, non-randomized 5 seconds (activateRndDir's trailing integer confirmed as genuine seconds via AISUBS.java: it only randomizes facing direction, then calls activateTime(a, d, seconds) directly with the literal value passed in)",
+          "iterationFormula": "single call in first.setAction(), before any purchase is attempted",
+          "totalSecondsConfirmed": 5.0
+        },
+        {
+          "phaseLabel": "per-successful-purchase browsing",
+          "actionType": "same fixed 5-second AI.SUBS().STAND.activateRndDir(a, d, 5), once per successful buy in the 'shop' resumer",
+          "iterationFormula": "the shop/walk loop continues as long as a purchase succeeds ('bought'), regardless of d.planByte1's own countdown (5 + RND.rInt(5)), which only gates the FAILURE/exit path; assumes RESOURCES_BOUGHT_PER_MARKET_VISIT=4 (a stated player-knowledge assumption, population/equipment-state dependent, not derivable from source), so the countdown's own randomness never actually determines the total under this assumption",
+          "note": "The walk-between-attempts (M_PlanMarket.walk, real pathing via AI.SUBS().walkTo.room) is deliberately excluded as travel time, per this project's standing zero-travel-time convention.",
+          "totalSecondsConfirmed": 20.0
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 25.0, "max": 25.0},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "No safety asymmetry identified. Deterministic under the stated 4-resources-bought assumption (5s browsing + 4 x 5s per purchase = 25s exactly), since every RND element in this room only affects the excluded failure/exit path."
+    },
+    {
+      "roomLabel": "Tavern",
+      "blueprintClass": "ROOM_TAVERN",
+      "confirmedBlueprintKey": "TAVERN_NORMAL",
+      "aiPlanFile": "PlanTavern.java",
+      "needKey": "_THIRST",
+      "congestionAware": false,
+      "visitPhases": [
+        {
+          "phaseLabel": "drinking",
+          "actionType": "repeated calls to the shared 'subdrink' AISUB (AIModule_Drink.java: a fixed 8-step sequence alternating AI.STATES().STAND(2.0+RND.rFloat(4.0)) and anima.fist(1.5, fixed), mean 22.0s per call - confirmed via both Monte Carlo simulation and exact analytic mean: 4 x (2.0+2.0) + 4 x 1.5 = 16.0 + 6.0 = 22.0)",
+          "iterationFormula": "d.planByte1 = STATS.FOOD().DRINK.decree().get(a) (a player-set slider, not a coded constant); one full subdrink cycle runs per drink, res() incrementing d.planByte2 until it reaches the decree value",
+          "note": "Assumes DRINKS_PER_TAVERN_VISIT=2 (a stated player-knowledge assumption, not derivable from source). The 'becomes drunk' branch (RND.rFloat() < STATS.FOOD().DRINK.indu().getD(a.indu())) is confirmed, via D_PlanDrunk.java and D_PlanDrinkGround.java, to run AFTER the tavern's own FSERVICE reservation is released (eat.can(a, d) releases it before the roll happens), so it does not extend this visit's own occupancy time and is correctly excluded.",
+          "totalSecondsConfirmed": 44.0
+        }
+      ],
+      "totalVisitSecondsAssumedRange": {"min": 44.0, "max": 44.0},
+      "recommendedStrategy": "measured_average",
+      "strategyReason": "No safety asymmetry identified. Confirmed via both Monte Carlo simulation (200,000 trials) and exact analytic derivation: 2 drinks x 22.0s/drink = 44.0s."
     }
   ],
   "roomsNotYetAnalyzed": []

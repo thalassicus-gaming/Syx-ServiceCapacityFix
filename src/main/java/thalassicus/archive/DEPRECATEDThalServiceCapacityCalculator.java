@@ -1,10 +1,11 @@
 // ThalServiceCapacityCalculator.java
-// Document Version 1.0.12
+// Document Version 1.1.0
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
-package thalassicus;
+package thalassicus.archive;
 
+import game.time.TIME;
 import init.race.RACES;
 import init.race.Race;
 import init.type.HCLASS_RACE;
@@ -20,6 +21,7 @@ import settlement.room.service.module.RoomService;
 import settlement.room.service.module.RoomServiceAccess;
 import settlement.stats.STATS;
 import snake2d.util.sets.LIST;
+import thalassicus.util.ThalServiceVisitDurations;
 import thalassicus.util.ThalsLogger;
 import util.gui.misc.GBox;
 import util.gui.misc.GText;
@@ -136,7 +138,7 @@ import util.gui.misc.GText;
 // ============================================================================
 //
 
-public class ThalServiceCapacityCalculator {
+public class DEPRECATEDThalServiceCapacityCalculator {
 
   // A separate log file from ThalServiceVisitDurations's ThalsLogger instance,
   // deliberately: each ThalsLogger instance is expected to truncate its own
@@ -148,6 +150,29 @@ public class ThalServiceCapacityCalculator {
       ThalsLogger.INFO,
       System.getenv("APPDATA") + "\\songsofsyx\\logs\\ThalServiceEstimateFix-Capacity.log"
   );
+
+  /*
+   The population this service infrastructure could support if it were
+   operating at 100% utilization under current demand characteristics.
+
+   This is a capacity-planning metric, not a demand metric.
+
+   It does NOT represent:
+   - current occupancy
+   - current utilization
+   - throughput (visits/day)
+   - number of citizens presently using the service
+   - number of citizens presently being served
+
+   Example:
+   A Physician serving a city of 500 citizens at 10% utilization should
+   have a HIGH supported population estimate, because it has substantial
+   spare capacity remaining.
+  */
+  public record SupportedPopEstimate(
+    double live, // derived from live data sampling in the current settlement
+    double hypothetical // derived from the calibrated demand model
+  ) {}
 
   private static final CharSequence AVERAGE_DAYS_BETWEEN_VISITS_HEADER = "Average Days Between Visits";
   private static final CharSequence BASE_RATE_LABEL = "Base";
@@ -182,10 +207,14 @@ public class ThalServiceCapacityCalculator {
       return new CapacityMultipliers(1.0, 1.0);
     }
 
+    String needKey = serviceNeed.key;
+    String blueprintKey = roomService.room().key;
+
     double needShare = roomService.usage / STATS.SERVICE().needTot(serviceNeed);
     if (serviceNeed instanceof NEED_E) {
       double needEMultiplier = 1.0 / (needShare * serviceNeed.rate.get(HCLASS_RACE.clP(null, null)));
-      return new CapacityMultipliers(needEMultiplier, needEMultiplier);
+      double blendedNeedEMultiplier = blendWithLiveData(needEMultiplier, needKey, blueprintKey);
+      return new CapacityMultipliers(blendedNeedEMultiplier, needEMultiplier);
     }
 
     CompetingTotals totals = getDefaultCompetingTotals();
@@ -195,10 +224,60 @@ public class ThalServiceCapacityCalculator {
     }
 
     double rate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
-    double visitDurationFactor = ThalServiceVisitDurations.servicePerDay(serviceNeed) * 0.5 * rate * needShare;
+    double visitDurationFactor = ThalServiceVisitDurations.servicePerDay(blueprintKey) * 0.5 * rate * needShare;
     double presentMultiplier = 1.0 / (visitDurationFactor / totals.presentTotal());
     double calibratedMultiplier = 1.0 / (visitDurationFactor / totals.calibratedTotal());
-    return new CapacityMultipliers(presentMultiplier, calibratedMultiplier);
+    double blendedPresentMultiplier = blendWithLiveData(presentMultiplier, needKey, blueprintKey);
+    return new CapacityMultipliers(blendedPresentMultiplier, calibratedMultiplier);
+  }
+
+  // Blends the formula-based Present multiplier with a live-measured one,
+  // derived from ThalAIScanner's rolling occupancy data via Little's Law
+  // (L = lambda * W, rearranged to a per-slot daily rate: utilization *
+  // secondsPerDay / visitDurationSeconds). The blend weight ramps linearly
+  // from 0.0 (pure formula) to 1.0 (pure live data) as ThalAIScanner's
+  // rolling window for this NEED fills up, avoiding a visible jump the
+  // moment live data first becomes available. Falls back to the pure
+  // formula value, unblended, in three distinct cases, each logged
+  // separately at trace level for diagnosability:
+  //   - the scanner has not been constructed yet (e.g. main menu, before a
+  //     save is loaded - ThalAIScanner.instance() is null until then);
+  //   - no measured visit duration exists for this specific blueprint key
+  //     (ThalServiceVisitDurations.visitSeconds() returns -1), since
+  //     converting a utilization fraction into a rate requires a real
+  //     duration, and guessing one would be silently wrong rather than
+  //     simply less precise;
+  //   - the rolling window has no samples at all yet for this NEED.
+  // The Calibrated multiplier is deliberately never blended - it describes
+  // a hypothetical fully-built city that can never be measured directly, so
+  // there is no live data for it to blend with in the first place.
+  private static double blendWithLiveData(double formulaMultiplier, String needKey, String blueprintKey) {
+    DEPRECATEDThalAIScanner scanner = DEPRECATEDThalAIScanner.instance();
+    if (scanner == null) {
+      log.trace("blendWithLiveData(%s, %s): scanner not yet constructed, using formula value %.4f unblended",
+          needKey, blueprintKey, formulaMultiplier);
+      return formulaMultiplier;
+    }
+
+    double measuredVisitSeconds = ThalServiceVisitDurations.visitSeconds(blueprintKey);
+    if (measuredVisitSeconds <= 0.0) {
+      log.trace("blendWithLiveData(%s, %s): no measured visit duration for this blueprint, using formula value %.4f unblended",
+          needKey, blueprintKey, formulaMultiplier);
+      return formulaMultiplier;
+    }
+
+    double liveWeight = scanner.liveDataWeight(needKey);
+    if (liveWeight <= 0.0) {
+      log.trace("blendWithLiveData(%s, %s): rolling window has no samples yet, using formula value %.4f unblended",
+          needKey, blueprintKey, formulaMultiplier);
+      return formulaMultiplier;
+    }
+
+    double liveMultiplier = scanner.averageUtilization(needKey) * TIME.secondsPerDay() / measuredVisitSeconds;
+    double blended = formulaMultiplier * (1.0 - liveWeight) + liveMultiplier * liveWeight;
+    log.trace("blendWithLiveData(%s, %s): formula=%.4f, live=%.4f, weight=%.3f -> blended=%.4f",
+        needKey, blueprintKey, formulaMultiplier, liveMultiplier, liveWeight, blended);
+    return blended;
   }
 
   public static void appendDivergenceLines(GBox tooltipBox, NEED serviceNeed) {

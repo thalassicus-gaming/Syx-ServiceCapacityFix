@@ -1,5 +1,5 @@
 // ModuleService.java
-// Document Version 1.0.4
+// Document Version 1.2.0
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
@@ -24,7 +24,7 @@ import snake2d.util.sets.LISTE;
 import snake2d.util.sets.Stack;
 import snake2d.util.sprite.SPRITE;
 import snake2d.util.sprite.text.Str;
-import thalassicus.ThalServiceCapacityCalculator;
+import thalassicus.archive.DEPRECATEDThalServiceCapacityCalculator;
 import util.data.DOUBLE;
 import util.data.GETTER;
 import util.gui.misc.GBox;
@@ -111,20 +111,15 @@ final class ModuleService implements Modules.ModuleMaker {
                   b.NL(8);
                   b.textLL(ModuleService.¤¤Capacity);
                   b.tab(6);
-                  ThalServiceCapacityCalculator.CapacityMultipliers manageScrMultipliers = ThalServiceCapacityCalculator.correctedCapacityMultipliers(I.this.p.service());
-                  GText manageScrCapacityText = b.text();
-                  GFORMAT.i(manageScrCapacityText, (int)(I.this.p.service().total() * manageScrMultipliers.presentMultiplier()));
-                  manageScrCapacityText.s().add('(');
-                  GFORMAT.i(manageScrCapacityText, (int)(I.this.p.service().total() * manageScrMultipliers.calibratedMultiplier()));
-                  manageScrCapacityText.add(')');
-                  b.add(manageScrCapacityText);
+                  int settlementAggregateCapacity = (int) (I.this.p.service().total() * I.this.p.service().totalMultiplier());
+                  b.add(GFORMAT.i(b.text(), settlementAggregateCapacity));
                   b.NL();
                   b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
                   b.NL(8);
                   // Lists any race whose need-rate for this service diverges from the
                   // default, since the Capacity estimate above uses the default rate
                   // and cannot reflect any city's actual species composition.
-                  ThalServiceCapacityCalculator.appendDivergenceLines(b, I.this.p.service().need);
+                  DEPRECATEDThalServiceCapacityCalculator.appendDivergenceLines(b, I.this.p.service().need);
                   b.textLL(ModuleService.¤¤RADIUS);
                   b.add(GFORMAT.i(b.text(), I.this.p.service().radius));
                   b.NL();
@@ -174,13 +169,8 @@ final class ModuleService implements Modules.ModuleMaker {
             box.NL();
          }
          box.textL(ModuleService.¤¤Capacity);
-         ThalServiceCapacityCalculator.CapacityMultipliers hoverMultipliers = ThalServiceCapacityCalculator.correctedCapacityMultipliers(this.p.service());
-         GText hoverCapacityText = box.text();
-         GFORMAT.i(hoverCapacityText, (int)(i.service().total() * hoverMultipliers.presentMultiplier()));
-         hoverCapacityText.s().add('(');
-         GFORMAT.i(hoverCapacityText, (int)(i.service().total() * hoverMultipliers.calibratedMultiplier()));
-         hoverCapacityText.add(')');
-         box.add(hoverCapacityText);
+         int roomInstanceCapacity = (int) (i.service().total() * this.p.service().totalMultiplier());
+         box.add(GFORMAT.i(box.text(), roomInstanceCapacity));
       }
 
       @Override
@@ -239,20 +229,15 @@ final class ModuleService implements Modules.ModuleMaker {
                b.NL(8);
                b.textLL(ModuleService.¤¤Capacity);
                b.tab(6);
-               ThalServiceCapacityCalculator.CapacityMultipliers panelMultipliers = ThalServiceCapacityCalculator.correctedCapacityMultipliers(I.this.p.service());
-               GText panelCapacityText = b.text();
-               GFORMAT.i(panelCapacityText, (int)(i.total() * panelMultipliers.presentMultiplier()));
-               panelCapacityText.s().add('(');
-               GFORMAT.i(panelCapacityText, (int)(i.total() * panelMultipliers.calibratedMultiplier()));
-               panelCapacityText.add(')');
-               text.add(panelCapacityText);
+               int roomInstanceCapacity = (int) (i.total() * I.this.p.service().totalMultiplier());
+               text.add(GFORMAT.i(b.text(), roomInstanceCapacity));
                b.NL();
                b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
                b.NL(8);
                // Lists any race whose need-rate for this service diverges from the
                // default, since the Capacity estimate above uses the default rate
                // and cannot reflect any city's actual species composition.
-               ThalServiceCapacityCalculator.appendDivergenceLines(b, I.this.p.service().need);
+               DEPRECATEDThalServiceCapacityCalculator.appendDivergenceLines(b, I.this.p.service().need);
                b.textLL(ModuleService.¤¤RADIUS);
                b.add(GFORMAT.i(b.text(), I.this.p.service().radius));
                b.NL();

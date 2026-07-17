@@ -29,7 +29,7 @@ import snake2d.util.datatypes.DIR;
 import snake2d.util.file.Alloc;
 import snake2d.util.file.Json;
 import snake2d.util.rnd.RND;
-import thalassicus.ThalServiceFurnisherStat;
+import thalassicus.util.ThalServiceFurnisherStat;
 import util.rendering.RenderData;
 import util.rendering.ShadowBatch;
 
