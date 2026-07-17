@@ -25,6 +25,8 @@ import thalassicus.util.ThalServiceVisitDurations;
 import thalassicus.util.ThalsLogger;
 import util.gui.misc.GBox;
 import util.gui.misc.GText;
+import util.info.GFORMAT;
+import view.sett.ui.room.ModuleService;
 
 //
 // ============================================================================
@@ -140,316 +142,305 @@ import util.gui.misc.GText;
 
 public class DEPRECATEDThalServiceCapacityCalculator {
 
-  // A separate log file from ThalServiceVisitDurations's ThalsLogger instance,
-  // deliberately: each ThalsLogger instance is expected to truncate its own
-  // file on its own first write this session, so two independent instances
-  // sharing one filename could clobber each other's earlier output. Worth
-  // consolidating into a single shared logger later if that assumption is
-  // confirmed one way or the other.
-  private static final ThalsLogger log = new ThalsLogger(
-      ThalsLogger.INFO,
-      System.getenv("APPDATA") + "\\songsofsyx\\logs\\ThalServiceEstimateFix-Capacity.log"
-  );
+    // A separate log file from ThalServiceVisitDurations's ThalsLogger instance,
+    // deliberately: each ThalsLogger instance is expected to truncate its own
+    // file on its own first write this session, so two independent instances
+    // sharing one filename could clobber each other's earlier output. Worth
+    // consolidating into a single shared logger later if that assumption is
+    // confirmed one way or the other.
+    private static final ThalsLogger log = new ThalsLogger(
+            ThalsLogger.INFO,
+            System.getenv("APPDATA") + "\\songsofsyx\\logs\\ThalServiceEstimateFix-Capacity.log"
+    );
 
-  /*
-   The population this service infrastructure could support if it were
-   operating at 100% utilization under current demand characteristics.
+    /*
+     The population this service infrastructure could support if it were
+     operating at 100% utilization under current demand characteristics.
 
-   This is a capacity-planning metric, not a demand metric.
+     This is a capacity-planning metric, not a demand metric.
 
-   It does NOT represent:
-   - current occupancy
-   - current utilization
-   - throughput (visits/day)
-   - number of citizens presently using the service
-   - number of citizens presently being served
+     It does NOT represent:
+     - current occupancy
+     - current utilization
+     - throughput (visits/day)
+     - number of citizens presently using the service
+     - number of citizens presently being served
 
-   Example:
-   A Physician serving a city of 500 citizens at 10% utilization should
-   have a HIGH supported population estimate, because it has substantial
-   spare capacity remaining.
-  */
-  public record SupportedPopEstimate(
-    double live, // derived from live data sampling in the current settlement
-    double hypothetical // derived from the calibrated demand model
-  ) {}
+     Example:
+     A Physician serving a city of 500 citizens at 10% utilization should
+     have a HIGH supported population estimate, because it has substantial
+     spare capacity remaining.
+    */
+    public record SupportedPopEstimate(
+            double live, // derived from live data sampling in the current settlement
+            double hypothetical // derived from the calibrated demand model
+    ) {}
 
-  private static final CharSequence AVERAGE_DAYS_BETWEEN_VISITS_HEADER = "Average Days Between Visits";
-  private static final CharSequence BASE_RATE_LABEL = "Base";
-  private static final CharSequence NEVER_LABEL = "Never";
+    private static final CharSequence AVERAGE_DAYS_BETWEEN_VISITS_HEADER = "Average Days Between Visits";
+    private static final CharSequence BASE_RATE_LABEL = "Base";
+    private static final CharSequence NEVER_LABEL = "Never";
 
-  // mean(RND.rInt(TIME.servicePerDay())) = mean(RND.rInt(4)) = (0+1+2+3)/4.
-  // Confirmed via RND.rInt(int) -> java.util.Random.nextInt(int), uniform
-  // over [0, max). See the class-level doc comment for the full derivation.
-  private static final double EXPECTED_SERVICE_CREDITS_PER_DAY = 1.5;
+    // mean(RND.rInt(TIME.servicePerDay())) = mean(RND.rInt(4)) = (0+1+2+3)/4.
+    // Confirmed via RND.rInt(int) -> java.util.Random.nextInt(int), uniform
+    // over [0, max). See the class-level doc comment for the full derivation.
+    private static final double EXPECTED_SERVICE_CREDITS_PER_DAY = 1.5;
 
-  // Real (wall-clock) milliseconds between cache rebuilds - long enough to
-  // avoid recomputing on every tooltip render, short enough that a player
-  // action (e.g. demolishing a building) shows up on the very next tooltip
-  // check a few seconds later, whether or not the game is currently paused.
-  private static final long CACHE_REFRESH_INTERVAL_MILLIS = 5000L;
+    // Real (wall-clock) milliseconds between cache rebuilds - long enough to
+    // avoid recomputing on every tooltip render, short enough that a player
+    // action (e.g. demolishing a building) shows up on the very next tooltip
+    // check a few seconds later, whether or not the game is currently paused.
+    private static final long CACHE_REFRESH_INTERVAL_MILLIS = 5000L;
 
-  private static long lastCacheRefreshMillis;
-  private static boolean cacheEverInitialized = false;
-  private static Set<String> presentNeedKeys;
-  private static CompetingTotals defaultCompetingTotals;
-  private static CompetingTotals[] raceCompetingTotals;
+    private static long lastCacheRefreshMillis;
+    private static boolean cacheEverInitialized = false;
+    private static Set<String> presentNeedKeys;
+    private static CompetingTotals defaultCompetingTotals;
+    private static CompetingTotals[] raceCompetingTotals;
 
-  public record CompetingTotals(double presentTotal, double calibratedTotal) {
-  }
-
-  public record CapacityMultipliers(double presentMultiplier, double calibratedMultiplier) {
-  }
-
-  public static CapacityMultipliers correctedCapacityMultipliers(RoomService roomService) {
-    NEED serviceNeed = roomService.need;
-    if (serviceNeed == null) {
-      return new CapacityMultipliers(1.0, 1.0);
+    public record CompetingTotals(double presentTotal, double calibratedTotal) {
     }
 
-    String needKey = serviceNeed.key;
-    String blueprintKey = roomService.room().key;
-
-    double needShare = roomService.usage / STATS.SERVICE().needTot(serviceNeed);
-    if (serviceNeed instanceof NEED_E) {
-      double needEMultiplier = 1.0 / (needShare * serviceNeed.rate.get(HCLASS_RACE.clP(null, null)));
-      double blendedNeedEMultiplier = blendWithLiveData(needEMultiplier, needKey, blueprintKey);
-      return new CapacityMultipliers(blendedNeedEMultiplier, needEMultiplier);
+    public record CapacityMultipliers(double presentMultiplier, double calibratedMultiplier) {
     }
 
-    CompetingTotals totals = getDefaultCompetingTotals();
-
-    if (STATS.SERVICE().needTot(serviceNeed) == 0.0) {
-      needShare = roomService.usage;
-    }
-
-    double rate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
-    double visitDurationFactor = ThalServiceVisitDurations.servicePerDay(blueprintKey) * 0.5 * rate * needShare;
-    double presentMultiplier = 1.0 / (visitDurationFactor / totals.presentTotal());
-    double calibratedMultiplier = 1.0 / (visitDurationFactor / totals.calibratedTotal());
-    double blendedPresentMultiplier = blendWithLiveData(presentMultiplier, needKey, blueprintKey);
-    return new CapacityMultipliers(blendedPresentMultiplier, calibratedMultiplier);
-  }
-
-  // Blends the formula-based Present multiplier with a live-measured one,
-  // derived from ThalAIScanner's rolling occupancy data via Little's Law
-  // (L = lambda * W, rearranged to a per-slot daily rate: utilization *
-  // secondsPerDay / visitDurationSeconds). The blend weight ramps linearly
-  // from 0.0 (pure formula) to 1.0 (pure live data) as ThalAIScanner's
-  // rolling window for this NEED fills up, avoiding a visible jump the
-  // moment live data first becomes available. Falls back to the pure
-  // formula value, unblended, in three distinct cases, each logged
-  // separately at trace level for diagnosability:
-  //   - the scanner has not been constructed yet (e.g. main menu, before a
-  //     save is loaded - ThalAIScanner.instance() is null until then);
-  //   - no measured visit duration exists for this specific blueprint key
-  //     (ThalServiceVisitDurations.visitSeconds() returns -1), since
-  //     converting a utilization fraction into a rate requires a real
-  //     duration, and guessing one would be silently wrong rather than
-  //     simply less precise;
-  //   - the rolling window has no samples at all yet for this NEED.
-  // The Calibrated multiplier is deliberately never blended - it describes
-  // a hypothetical fully-built city that can never be measured directly, so
-  // there is no live data for it to blend with in the first place.
-  private static double blendWithLiveData(double formulaMultiplier, String needKey, String blueprintKey) {
-    DEPRECATEDThalAIScanner scanner = DEPRECATEDThalAIScanner.instance();
-    if (scanner == null) {
-      log.trace("blendWithLiveData(%s, %s): scanner not yet constructed, using formula value %.4f unblended",
-          needKey, blueprintKey, formulaMultiplier);
-      return formulaMultiplier;
-    }
-
-    double measuredVisitSeconds = ThalServiceVisitDurations.visitSeconds(blueprintKey);
-    if (measuredVisitSeconds <= 0.0) {
-      log.trace("blendWithLiveData(%s, %s): no measured visit duration for this blueprint, using formula value %.4f unblended",
-          needKey, blueprintKey, formulaMultiplier);
-      return formulaMultiplier;
-    }
-
-    double liveWeight = scanner.liveDataWeight(needKey);
-    if (liveWeight <= 0.0) {
-      log.trace("blendWithLiveData(%s, %s): rolling window has no samples yet, using formula value %.4f unblended",
-          needKey, blueprintKey, formulaMultiplier);
-      return formulaMultiplier;
-    }
-
-    double liveMultiplier = scanner.averageUtilization(needKey) * TIME.secondsPerDay() / measuredVisitSeconds;
-    double blended = formulaMultiplier * (1.0 - liveWeight) + liveMultiplier * liveWeight;
-    log.trace("blendWithLiveData(%s, %s): formula=%.4f, live=%.4f, weight=%.3f -> blended=%.4f",
-        needKey, blueprintKey, formulaMultiplier, liveMultiplier, liveWeight, blended);
-    return blended;
-  }
-
-  public static void appendDivergenceLines(GBox tooltipBox, NEED serviceNeed) {
-    if (serviceNeed == null) {
-      return;
-    }
-
-    double baseRate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
-    CompetingTotals defaultTotals = getDefaultCompetingTotals();
-
-    tooltipBox.textLL(AVERAGE_DAYS_BETWEEN_VISITS_HEADER);
-    tooltipBox.NL();
-
-    tooltipBox.textL(BASE_RATE_LABEL);
-    tooltipBox.tab(6);
-    appendExpectedDaysPair(tooltipBox, baseRate, defaultTotals);
-    tooltipBox.NL();
-
-    for (Race currentRace : RACES.all()) {
-      if (currentRace.all(serviceNeed.rate).size() > 0) {
-        double raceRate = currentRace.bvalue(serviceNeed.rate);
-        CompetingTotals raceTotals = getRaceCompetingTotals(currentRace);
-
-        tooltipBox.textL(currentRace.info.names);
-        tooltipBox.tab(6);
-        appendExpectedDaysPair(tooltipBox, raceRate, raceTotals);
-        tooltipBox.NL();
-      }
-    }
-
-    tooltipBox.NL(8);
-  }
-
-  private static void appendExpectedDaysPair(GBox tooltipBox, double numerator, CompetingTotals totals) {
-    GText valueText = tooltipBox.text();
-    appendExpectedDays(valueText, numerator, totals.presentTotal());
-    valueText.s();
-    valueText.add('(');
-    appendExpectedDays(valueText, numerator, totals.calibratedTotal());
-    valueText.add(')');
-    valueText.normalify();
-    tooltipBox.add(valueText);
-  }
-
-  private static void appendExpectedDays(GText valueText, double numerator, double denominator) {
-    double share = denominator > 0.0 ? numerator / denominator : 0.0;
-    if (share <= 0.0) {
-      valueText.add(NEVER_LABEL);
-    } else {
-      double expectedDays = 1.0 / (share * EXPECTED_SERVICE_CREDITS_PER_DAY);
-      valueText.add(expectedDays, 1);
-    }
-  }
-
-  private static void ensureCacheCurrent() {
-    long now = System.currentTimeMillis();
-    // cacheEverInitialized, not a sentinel value compared via subtraction:
-    // now - Long.MIN_VALUE overflows a 64-bit long (now is positive, and
-    // Long.MIN_VALUE's magnitude alone already exceeds Long.MAX_VALUE by 1),
-    // wrapping around to an unpredictable result that silently failed the
-    // >= CACHE_REFRESH_INTERVAL_MILLIS check on the very first call ever,
-    // leaving presentNeedKeys permanently null. An explicit boolean sidesteps
-    // the overflow risk entirely rather than hunting for a "safe" sentinel.
-    if (!cacheEverInitialized || now - lastCacheRefreshMillis >= CACHE_REFRESH_INTERVAL_MILLIS) {
-      log.info("Rebuilding cache: %d ms since last refresh", cacheEverInitialized ? now - lastCacheRefreshMillis : -1);
-      cacheEverInitialized = true;
-      lastCacheRefreshMillis = now;
-      defaultCompetingTotals = null;
-      raceCompetingTotals = new CompetingTotals[RACES.all().size()];
-      presentNeedKeys = computePresentNeedKeys();
-      log.info("presentNeedKeys after rebuild: %s", presentNeedKeys);
-    }
-  }
-
-  private static Set<String> computePresentNeedKeys() {
-    Set<String> keys = new HashSet<>();
-    for (RoomServiceAccess roomService : RoomServiceAccess.ALL()) {
-      if (roomService.need == null) {
-        log.info("Room check skipped (no NEED): blueprintKey=%s", roomService.room().key);
-        continue;
-      }
-
-      if (!(roomService.room() instanceof RoomBlueprintIns<?> blueprint)) {
-        log.info("Room check skipped (not a RoomBlueprintIns): need=%s, blueprintKey=%s, roomClass=%s",
-            roomService.need.key, roomService.room().key, roomService.room().getClass().getSimpleName());
-        continue;
-      }
-
-      int instances = blueprint.instancesSize();
-      log.info("Room check: need=%s, blueprintKey=%s, instancesSize=%d", roomService.need.key, blueprint.key, instances);
-      if (instances > 0) {
-        keys.add(roomService.need.key);
-      }
-    }
-
-    // Skinnydip is satisfied at any open-water tile (SETT.PATH().finders.water),
-    // not a constructed room, so there is no instancesSize() to check at all.
-    // Treated as always present - a map with zero water tiles is a rare,
-    // degenerate case rather than a normal playstyle.
-    keys.add(NEEDS.TYPES().SKINNYDIP.key);
-
-    // Temple and Shrine are registered per-religion (SETT.ROOMS().TEMPLES),
-    // a separate registry from RoomServiceAccess.ALL() entirely - confirmed
-    // via StatsReligion.ReligionTot (whose NEED is NEEDS.TYPES().TEMPLE /
-    // .SHRINE directly, not looked up per-room) and ROOM_TEMPLES itself.
-    // ALL and SHRINES are already flat lists spanning every religion (perRel
-    // and perRelShrine are just a religion-indexed partition of those same
-    // lists), so no per-religion loop is needed.
-    if (hasAnyInstance(NEEDS.TYPES().TEMPLE.key, SETT.ROOMS().TEMPLES.ALL)) {
-      keys.add(NEEDS.TYPES().TEMPLE.key);
-    }
-    if (hasAnyInstance(NEEDS.TYPES().SHRINE.key, SETT.ROOMS().TEMPLES.SHRINES)) {
-      keys.add(NEEDS.TYPES().SHRINE.key);
-    }
-
-    return keys;
-  }
-
-  private static boolean hasAnyInstance(CharSequence needKeyForLogging, LIST<?> blueprints) {
-    int totalInstances = 0;
-    for (Object blueprint : blueprints) {
-      if (blueprint instanceof RoomBlueprintIns<?> instances) {
-        int count = instances.instancesSize();
-        log.info("Room check: need=%s, blueprintKey=%s, instancesSize=%d", needKeyForLogging, instances.key, count);
-        totalInstances += count;
-      } else {
-        log.info("Room check skipped (not a RoomBlueprintIns): need=%s, roomClass=%s", needKeyForLogging, blueprint.getClass().getSimpleName());
-      }
-    }
-    return totalInstances > 0;
-  }
-
-  private static CompetingTotals getDefaultCompetingTotals() {
-    ensureCacheCurrent();
-    if (defaultCompetingTotals == null) {
-      double presentTotal = 0.0;
-      double calibratedTotal = 0.0;
-      Set<String> countedNeedKeys = new HashSet<>();
-      for (NEED competingNeed : NEEDS.ALLSIMPLE()) {
-        // Guards against NEEDS.ALLSIMPLE() potentially containing duplicate
-        // entries for the same NEED (unconfirmed either way from source), so
-        // a rate is never summed twice regardless of which case is true.
-        if (countedNeedKeys.add(competingNeed.key)) {
-          double rate = competingNeed.rate.get(HCLASS_RACE.clP(null, null));
-          calibratedTotal += rate;
-          if (presentNeedKeys.contains(competingNeed.key)) {
-            presentTotal += rate;
-          }
+    public static CapacityMultipliers correctedCapacityMultipliers(RoomService roomService) {
+        NEED serviceNeed = roomService.need;
+        if (serviceNeed == null) {
+            return new CapacityMultipliers(1.0, 1.0);
         }
-      }
-      defaultCompetingTotals = new CompetingTotals(presentTotal, calibratedTotal);
-    }
-    return defaultCompetingTotals;
-  }
 
-  private static CompetingTotals getRaceCompetingTotals(Race race) {
-    ensureCacheCurrent();
-    if (raceCompetingTotals[race.index()] == null) {
-      double presentTotal = 0.0;
-      double calibratedTotal = 0.0;
-      Set<String> countedNeedKeys = new HashSet<>();
-      for (NEED competingNeed : NEEDS.ALLSIMPLE()) {
-        if (countedNeedKeys.add(competingNeed.key)) {
-          double rate = race.bvalue(competingNeed.rate);
-          calibratedTotal += rate;
-          if (presentNeedKeys.contains(competingNeed.key)) {
-            presentTotal += rate;
-          }
+        String needKey = serviceNeed.key;
+        String blueprintKey = roomService.room().key;
+
+        double needShare = roomService.usage / STATS.SERVICE().needTot(serviceNeed);
+        if (serviceNeed instanceof NEED_E) {
+            double needEMultiplier = 1.0 / (needShare * serviceNeed.rate.get(HCLASS_RACE.clP(null, null)));
+            double blendedNeedEMultiplier = blendWithLiveData(needEMultiplier, needKey, blueprintKey);
+            return new CapacityMultipliers(blendedNeedEMultiplier, needEMultiplier);
         }
-      }
-      raceCompetingTotals[race.index()] = new CompetingTotals(presentTotal, calibratedTotal);
+
+        CompetingTotals totals = getDefaultCompetingTotals();
+
+        if (STATS.SERVICE().needTot(serviceNeed) == 0.0) {
+            needShare = roomService.usage;
+        }
+
+        double rate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
+        double visitDurationFactor = ThalServiceVisitDurations.servicePerDay(blueprintKey) * 0.5 * rate * needShare;
+        double presentMultiplier = 1.0 / (visitDurationFactor / totals.presentTotal());
+        double calibratedMultiplier = 1.0 / (visitDurationFactor / totals.calibratedTotal());
+        double blendedPresentMultiplier = blendWithLiveData(presentMultiplier, needKey, blueprintKey);
+        return new CapacityMultipliers(blendedPresentMultiplier, calibratedMultiplier);
     }
-    return raceCompetingTotals[race.index()];
-  }
+
+    // Blends the formula-based Present multiplier with a live-measured one,
+    // derived from ThalAIScanner's rolling occupancy data via Little's Law
+    // (L = lambda * W, rearranged to a per-slot daily rate: utilization *
+    // secondsPerDay / visitDurationSeconds). The blend weight ramps linearly
+    // from 0.0 (pure formula) to 1.0 (pure live data) as ThalAIScanner's
+    // rolling window for this NEED fills up, avoiding a visible jump the
+    // moment live data first becomes available. Falls back to the pure
+    // formula value, unblended, in three distinct cases, each logged
+    // separately at trace level for diagnosability:
+    //   - the scanner has not been constructed yet (e.g. main menu, before a
+    //     save is loaded - ThalAIScanner.instance() is null until then);
+    //   - no measured visit duration exists for this specific blueprint key
+    //     (ThalServiceVisitDurations.visitSeconds() returns -1), since
+    //     converting a utilization fraction into a rate requires a real
+    //     duration, and guessing one would be silently wrong rather than
+    //     simply less precise;
+    //   - the rolling window has no samples at all yet for this NEED.
+    // The Calibrated multiplier is deliberately never blended - it describes
+    // a hypothetical fully-built city that can never be measured directly, so
+    // there is no live data for it to blend with in the first place.
+    private static double blendWithLiveData(double formulaMultiplier, String needKey, String blueprintKey) {
+        DEPRECATEDThalAIScanner scanner = DEPRECATEDThalAIScanner.instance();
+        if (scanner == null) {
+            log.trace("blendWithLiveData(%s, %s): scanner not yet constructed, using formula value %.4f unblended",
+                    needKey, blueprintKey, formulaMultiplier);
+            return formulaMultiplier;
+        }
+
+        double measuredVisitSeconds = ThalServiceVisitDurations.visitSeconds(blueprintKey);
+        if (measuredVisitSeconds <= 0.0) {
+            log.trace("blendWithLiveData(%s, %s): no measured visit duration for this blueprint, using formula value %.4f unblended",
+                    needKey, blueprintKey, formulaMultiplier);
+            return formulaMultiplier;
+        }
+
+        double liveWeight = scanner.liveDataWeight(needKey);
+        if (liveWeight <= 0.0) {
+            log.trace("blendWithLiveData(%s, %s): rolling window has no samples yet, using formula value %.4f unblended",
+                    needKey, blueprintKey, formulaMultiplier);
+            return formulaMultiplier;
+        }
+
+        double liveMultiplier = scanner.averageUtilization(needKey) * TIME.secondsPerDay() / measuredVisitSeconds;
+        double blended = formulaMultiplier * (1.0 - liveWeight) + liveMultiplier * liveWeight;
+        log.trace("blendWithLiveData(%s, %s): formula=%.4f, live=%.4f, weight=%.3f -> blended=%.4f",
+                needKey, blueprintKey, formulaMultiplier, liveMultiplier, liveWeight, blended);
+        return blended;
+    }
+
+    private static final CharSequence NOT_USED_LABEL = "Never";
+    private static final double MINIMUM_RATE_THRESHOLD = 0.0001;
+    public static void appendDivergenceLines(GBox tooltipBox, NEED serviceNeed, double baseCapacity) {
+        if (serviceNeed == null) { return; }
+        double baseRate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
+        for (Race currentRace : RACES.all()) {
+            if (currentRace.all(serviceNeed.rate).size() > 0) {
+                double raceRate = currentRace.bvalue(serviceNeed.rate);
+                tooltipBox.NL();
+                tooltipBox.textL(currentRace.info.names);
+                tooltipBox.tab(6);
+                if (raceRate <= MINIMUM_RATE_THRESHOLD){
+                    tooltipBox.text(NOT_USED_LABEL);
+                } else {
+                    tooltipBox.add(GFORMAT.i(tooltipBox.text(),(int)(baseCapacity * baseRate / raceRate)));
+                }
+            }
+        }
+    }
+
+    private static void appendExpectedDaysPair(GBox tooltipBox, double numerator, CompetingTotals totals) {
+        GText valueText = tooltipBox.text();
+        appendExpectedDays(valueText, numerator, totals.presentTotal());
+        valueText.s();
+        valueText.add('(');
+        appendExpectedDays(valueText, numerator, totals.calibratedTotal());
+        valueText.add(')');
+        valueText.normalify();
+        tooltipBox.add(valueText);
+    }
+
+    private static void appendExpectedDays(GText valueText, double numerator, double denominator) {
+        double share = denominator > 0.0 ? numerator / denominator : 0.0;
+        if (share <= 0.0) {
+            valueText.add(NEVER_LABEL);
+        } else {
+            double expectedDays = 1.0 / (share * EXPECTED_SERVICE_CREDITS_PER_DAY);
+            valueText.add(expectedDays, 1);
+        }
+    }
+
+    private static void ensureCacheCurrent() {
+        long now = System.currentTimeMillis();
+        // cacheEverInitialized, not a sentinel value compared via subtraction:
+        // now - Long.MIN_VALUE overflows a 64-bit long (now is positive, and
+        // Long.MIN_VALUE's magnitude alone already exceeds Long.MAX_VALUE by 1),
+        // wrapping around to an unpredictable result that silently failed the
+        // >= CACHE_REFRESH_INTERVAL_MILLIS check on the very first call ever,
+        // leaving presentNeedKeys permanently null. An explicit boolean sidesteps
+        // the overflow risk entirely rather than hunting for a "safe" sentinel.
+        if (!cacheEverInitialized || now - lastCacheRefreshMillis >= CACHE_REFRESH_INTERVAL_MILLIS) {
+            log.info("Rebuilding cache: %d ms since last refresh", cacheEverInitialized ? now - lastCacheRefreshMillis : -1);
+            cacheEverInitialized = true;
+            lastCacheRefreshMillis = now;
+            defaultCompetingTotals = null;
+            raceCompetingTotals = new CompetingTotals[RACES.all().size()];
+            presentNeedKeys = computePresentNeedKeys();
+            log.info("presentNeedKeys after rebuild: %s", presentNeedKeys);
+        }
+    }
+
+    private static Set<String> computePresentNeedKeys() {
+        Set<String> keys = new HashSet<>();
+        for (RoomServiceAccess roomService : RoomServiceAccess.ALL()) {
+            if (roomService.need == null) {
+                log.info("Room check skipped (no NEED): blueprintKey=%s", roomService.room().key);
+                continue;
+            }
+
+            if (!(roomService.room() instanceof RoomBlueprintIns<?> blueprint)) {
+                log.info("Room check skipped (not a RoomBlueprintIns): need=%s, blueprintKey=%s, roomClass=%s",
+                        roomService.need.key, roomService.room().key, roomService.room().getClass().getSimpleName());
+                continue;
+            }
+
+            int instances = blueprint.instancesSize();
+            log.info("Room check: need=%s, blueprintKey=%s, instancesSize=%d", roomService.need.key, blueprint.key, instances);
+            if (instances > 0) {
+                keys.add(roomService.need.key);
+            }
+        }
+
+        // Skinnydip is satisfied at any open-water tile (SETT.PATH().finders.water),
+        // not a constructed room, so there is no instancesSize() to check at all.
+        // Treated as always present - a map with zero water tiles is a rare,
+        // degenerate case rather than a normal playstyle.
+        keys.add(NEEDS.TYPES().SKINNYDIP.key);
+
+        // Temple and Shrine are registered per-religion (SETT.ROOMS().TEMPLES),
+        // a separate registry from RoomServiceAccess.ALL() entirely - confirmed
+        // via StatsReligion.ReligionTot (whose NEED is NEEDS.TYPES().TEMPLE /
+        // .SHRINE directly, not looked up per-room) and ROOM_TEMPLES itself.
+        // ALL and SHRINES are already flat lists spanning every religion (perRel
+        // and perRelShrine are just a religion-indexed partition of those same
+        // lists), so no per-religion loop is needed.
+        if (hasAnyInstance(NEEDS.TYPES().TEMPLE.key, SETT.ROOMS().TEMPLES.ALL)) {
+            keys.add(NEEDS.TYPES().TEMPLE.key);
+        }
+        if (hasAnyInstance(NEEDS.TYPES().SHRINE.key, SETT.ROOMS().TEMPLES.SHRINES)) {
+            keys.add(NEEDS.TYPES().SHRINE.key);
+        }
+
+        return keys;
+    }
+
+    private static boolean hasAnyInstance(CharSequence needKeyForLogging, LIST<?> blueprints) {
+        int totalInstances = 0;
+        for (Object blueprint : blueprints) {
+            if (blueprint instanceof RoomBlueprintIns<?> instances) {
+                int count = instances.instancesSize();
+                log.info("Room check: need=%s, blueprintKey=%s, instancesSize=%d", needKeyForLogging, instances.key, count);
+                totalInstances += count;
+            } else {
+                log.info("Room check skipped (not a RoomBlueprintIns): need=%s, roomClass=%s", needKeyForLogging, blueprint.getClass().getSimpleName());
+            }
+        }
+        return totalInstances > 0;
+    }
+
+    private static CompetingTotals getDefaultCompetingTotals() {
+        ensureCacheCurrent();
+        if (defaultCompetingTotals == null) {
+            double presentTotal = 0.0;
+            double calibratedTotal = 0.0;
+            Set<String> countedNeedKeys = new HashSet<>();
+            for (NEED competingNeed : NEEDS.ALLSIMPLE()) {
+                // Guards against NEEDS.ALLSIMPLE() potentially containing duplicate
+                // entries for the same NEED (unconfirmed either way from source), so
+                // a rate is never summed twice regardless of which case is true.
+                if (countedNeedKeys.add(competingNeed.key)) {
+                    double rate = competingNeed.rate.get(HCLASS_RACE.clP(null, null));
+                    calibratedTotal += rate;
+                    if (presentNeedKeys.contains(competingNeed.key)) {
+                        presentTotal += rate;
+                    }
+                }
+            }
+            defaultCompetingTotals = new CompetingTotals(presentTotal, calibratedTotal);
+        }
+        return defaultCompetingTotals;
+    }
+
+    private static CompetingTotals getRaceCompetingTotals(Race race) {
+        ensureCacheCurrent();
+        if (raceCompetingTotals[race.index()] == null) {
+            double presentTotal = 0.0;
+            double calibratedTotal = 0.0;
+            Set<String> countedNeedKeys = new HashSet<>();
+            for (NEED competingNeed : NEEDS.ALLSIMPLE()) {
+                if (countedNeedKeys.add(competingNeed.key)) {
+                    double rate = race.bvalue(competingNeed.rate);
+                    calibratedTotal += rate;
+                    if (presentNeedKeys.contains(competingNeed.key)) {
+                        presentTotal += rate;
+                    }
+                }
+            }
+            raceCompetingTotals[race.index()] = new CompetingTotals(presentTotal, calibratedTotal);
+        }
+        return raceCompetingTotals[race.index()];
+    }
 }

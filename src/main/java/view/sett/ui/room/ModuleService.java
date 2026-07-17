@@ -1,5 +1,5 @@
 // ModuleService.java
-// Document Version 1.2.0
+// Document Version 1.4.0
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
@@ -24,7 +24,7 @@ import snake2d.util.sets.LISTE;
 import snake2d.util.sets.Stack;
 import snake2d.util.sprite.SPRITE;
 import snake2d.util.sprite.text.Str;
-import thalassicus.archive.DEPRECATEDThalServiceCapacityCalculator;
+import thalassicus.util.ThalSpeciesCapacity;
 import util.data.DOUBLE;
 import util.data.GETTER;
 import util.gui.misc.GBox;
@@ -56,13 +56,23 @@ final class ModuleService implements Modules.ModuleMaker {
    // rebuild, while the surrounding numeric logic updated correctly. Using a
    // plain field name sidesteps whatever that caching keys on.
    private static final CharSequence THAL_CAPACITY_DESCRIPTION =
-       "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one.";
+       "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one, increasing its effective capacity.";
    private static CharSequence ¤¤USAGE_DESC = "¤The highest load of this service during a day. Once full, it means there aren't enough services to meet your subjects demands. If low, it's an indication you can cut down on this service.";
    private static CharSequence ¤¤RADIUS = "¤Radius";
    private static CharSequence ¤¤RADIUSD = "¤All services operate within a radius. The radius is the max distance a subject is prepared to walk to get to a service.";
-  private static CharSequence stuff = ¤¤CapacityD;
-  static {
-      D.ts(ModuleService.class);
+   // Checked against the aggregate, blueprint-wide load() rather than any
+   // single room instance's own occupancy - a citizen turned away from one
+   // saturated room simply visits another nearby, so it's citywide load
+   // that matters, and that's also the exact quantity the capacity
+  // estimate's own denominator is built from.
+   private static final double SATURATION_LOAD_THRESHOLD = 0.9;
+   // Not ¤-prefixed, matching THAL_CAPACITY_DESCRIPTION's own note above on
+  // the D.ts() caching gotcha.
+   private static final CharSequence SATURATION_DISCLAIMER =
+      "* Over-estimating capacity due to high load.";
+   private static CharSequence stuff = ¤¤CapacityD;
+   static {
+   D.ts(ModuleService.class);
    }
 
    public ModuleService(Init init) {
@@ -72,6 +82,21 @@ final class ModuleService implements Modules.ModuleMaker {
    public void make(RoomBlueprint p, LISTE<UIRoomModule> l) {
       if (p instanceof RoomService.ROOM_SERVICE_HASER) {
          l.add(new ModuleService.I((RoomService.ROOM_SERVICE_HASER)p));
+      }
+   }
+
+   // Shared by every tooltip site that displays Capacity, appended directly
+   // below the number itself. At or above SATURATION_LOAD_THRESHOLD,
+   // capacityPerSlot is derived from an artificially-capped observed peak
+   // rather than true (unconstrained) demand, which can only push the
+   // estimate too high, never too low - so the number itself is left
+   // untouched here (no soft cap, no formula switch, which would risk the
+   // displayed number flickering between two formulas near the threshold)
+   // and a plain disclaimer is appended instead.
+   private static void appendCapacityDisclaimer(GBox b, RoomService service) {
+      if (service.load() > SATURATION_LOAD_THRESHOLD) {
+         b.NL();
+         b.text(ModuleService.SATURATION_DISCLAIMER);
       }
    }
 
@@ -111,15 +136,17 @@ final class ModuleService implements Modules.ModuleMaker {
                   b.NL(8);
                   b.textLL(ModuleService.¤¤Capacity);
                   b.tab(6);
-                  int settlementAggregateCapacity = (int) (I.this.p.service().total() * I.this.p.service().totalMultiplier());
+                  double settlementAggregateCapacityRaw = I.this.p.service().total() * I.this.p.service().totalMultiplier();
+                  int settlementAggregateCapacity = (int) settlementAggregateCapacityRaw;
                   b.add(GFORMAT.i(b.text(), settlementAggregateCapacity));
+                  ModuleService.appendCapacityDisclaimer(b, I.this.p.service());
                   b.NL();
                   b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
                   b.NL(8);
                   // Lists any race whose need-rate for this service diverges from the
                   // default, since the Capacity estimate above uses the default rate
                   // and cannot reflect any city's actual species composition.
-                  DEPRECATEDThalServiceCapacityCalculator.appendDivergenceLines(b, I.this.p.service().need);
+                  ThalSpeciesCapacity.appendDivergenceLines(b, I.this.p.service().need, settlementAggregateCapacityRaw);
                   b.textLL(ModuleService.¤¤RADIUS);
                   b.add(GFORMAT.i(b.text(), I.this.p.service().radius));
                   b.NL();
@@ -171,6 +198,7 @@ final class ModuleService implements Modules.ModuleMaker {
          box.textL(ModuleService.¤¤Capacity);
          int roomInstanceCapacity = (int) (i.service().total() * this.p.service().totalMultiplier());
          box.add(GFORMAT.i(box.text(), roomInstanceCapacity));
+         ModuleService.appendCapacityDisclaimer(box, this.p.service());
       }
 
       @Override
@@ -229,15 +257,17 @@ final class ModuleService implements Modules.ModuleMaker {
                b.NL(8);
                b.textLL(ModuleService.¤¤Capacity);
                b.tab(6);
-               int roomInstanceCapacity = (int) (i.total() * I.this.p.service().totalMultiplier());
+               double roomInstanceCapacityRaw = i.total() * I.this.p.service().totalMultiplier();
+               int roomInstanceCapacity = (int) roomInstanceCapacityRaw;
                text.add(GFORMAT.i(b.text(), roomInstanceCapacity));
+               ModuleService.appendCapacityDisclaimer(b, I.this.p.service());
                b.NL();
                b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
                b.NL(8);
                // Lists any race whose need-rate for this service diverges from the
                // default, since the Capacity estimate above uses the default rate
                // and cannot reflect any city's actual species composition.
-               DEPRECATEDThalServiceCapacityCalculator.appendDivergenceLines(b, I.this.p.service().need);
+               ThalSpeciesCapacity.appendDivergenceLines(b, I.this.p.service().need, roomInstanceCapacityRaw);
                b.textLL(ModuleService.¤¤RADIUS);
                b.add(GFORMAT.i(b.text(), I.this.p.service().radius));
                b.NL();
