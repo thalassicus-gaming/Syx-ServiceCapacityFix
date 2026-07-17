@@ -9,7 +9,6 @@ import settlement.room.main.furnisher.Furnisher;
 import settlement.room.main.furnisher.FurnisherStat;
 import settlement.room.service.module.RoomService;
 import snake2d.util.datatypes.AREA;
-import thalassicus.archive.DEPRECATEDThalServiceCapacityCalculator;
 import util.gui.misc.GText;
 import util.info.GFORMAT;
 
@@ -59,15 +58,10 @@ public class ThalServiceFurnisherStat extends FurnisherStat {
 
   @Override
   public GText format(GText t, double slotCount) {
-    DEPRECATEDThalServiceCapacityCalculator.CapacityMultipliers multipliers =
-        DEPRECATEDThalServiceCapacityCalculator.correctedCapacityMultipliers(this.room.service());
-    int presentCapacity = (int)(slotCount * multipliers.presentMultiplier());
-    int allCapacity = (int)(slotCount * multipliers.calibratedMultiplier());
-
-    GFORMAT.i(t, presentCapacity);
-    t.add(" presently (");
-    GFORMAT.i(t, allCapacity);
-    t.add(" with all services)");
+    GFORMAT.i(t, (long) slotCount);
+    t.add(" (");
+    GFORMAT.i(t, (long) (room.service().totalMultiplier() * slotCount));
+    t.add(")");
     return t;
   }
 }
