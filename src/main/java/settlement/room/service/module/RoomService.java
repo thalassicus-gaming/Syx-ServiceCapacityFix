@@ -1,5 +1,5 @@
 // RoomService.java
-// Document Version 1.2.1
+// Document Version 1.2.4
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
@@ -251,11 +251,25 @@ public abstract class RoomService {
         this.lastEligibleDemandPopulation = value;
     }
 
-    // The peak-load figure actually used for the capacity estimate: the
-    // rolling max over the event-cycle window for event-boosted blueprints
-    // (Arena/Arenag/Speaker/Stage), or plain load() (yesterday's peak) for
-    // every other blueprint. Kept as a single accessor, rather than reading
-    // load() directly in two places, so the saturation disclaimer
+    // The peak-load figure actually used for the capacity estimate, in
+    // two tiers:
+    //   1. eventPeakLoadWindow's rolling max, once it actually has at least
+    //      one real sample pushed into it (sampleCount() > 0) - not merely
+    //      non-null, since the window is allocated eagerly in the
+    //      constructor for any qualifying blueprint, well before its first
+    //      real push. Checking non-null alone would return 0.0 here for
+    //      every event-boosted blueprint until its first daily rollover -
+    //      a needless trip straight to Jake's formula when a perfectly
+    //      good dailyPeakLoad is sitting right there unused.
+    //   2. dailyPeakLoad (load()'s own loadLast) - correct for every
+    //      ordinary blueprint always, and the right fallback for an event-
+    //      boosted one before its window has filled in.
+    // Falls through to Jake's original formula - handled by
+    // totalMultiplier() below - whenever this method returns 0.0
+    // (dailyPeakLoad itself unset yet either, e.g. a blueprint never used
+    // since the last save/load).
+    // Kept as a single accessor, rather than reading load() directly in two
+    // places, so the saturation disclaimer
     // (ModuleService.appendCapacityDisclaimer) and the capacity formula
     // itself (totalMultiplier(), below) can never disagree about which
     // "peak" is under discussion. Always calls load() first regardless -
@@ -263,9 +277,22 @@ public abstract class RoomService {
     // lastEligibleDemandPopulation, pushing into eventPeakLoadWindow) must
     // still happen on schedule even when its return value ends up
     // overridden below.
+    //
+    // Speaker/Stage previously had a hardcoded 0.0 exception here, since
+    // their load() was known-unreliable (RoomServiceInstance's own
+    // double-report artifact spuriously pegging the aggregate near 100%).
+    // That artifact is now fixed directly at the source
+    // (RoomServiceInstance.employeeDrivenSlotCountUpdate(), called from
+    // SpeakerInstance/StageInstance's setServices()), so the exception has
+    // been removed - these two blueprints now go through the same tiers as
+    // every other event-boosted room.
     public double capacityLoad() {
         double dailyPeakLoad = this.load();
-        return this.eventPeakLoadWindow != null ? this.eventPeakLoadWindow.max() : dailyPeakLoad;
+        if (this.eventPeakLoadWindow != null && this.eventPeakLoadWindow.sampleCount() > 0) {
+            return this.eventPeakLoadWindow.max();
+        }
+
+        return dailyPeakLoad;
     }
 
     // Tries a direct, self-contained estimate first: if this blueprint has
