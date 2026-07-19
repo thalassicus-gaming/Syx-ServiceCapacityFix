@@ -1,5 +1,5 @@
 // ThalCapacityProfileManager.java
-// Document Version 1.1.0
+// Document Version 1.2.0
 // Creation date: 2026/07/18
 // Creator: Thalassicus
 
@@ -16,10 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import script.SCRIPT;
-import settlement.main.SETT;
-import settlement.room.service.module.RoomServiceAccess;
-import settlement.room.spirit.shrine.ROOM_SHRINE;
-import settlement.room.spirit.temple.ROOM_TEMPLE;
+import settlement.room.service.module.RoomService;
 import settlement.stats.STATS;
 import snake2d.util.file.FileGetter;
 import snake2d.util.file.FilePutter;
@@ -289,10 +286,10 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         this.captureSpeciesAndHTypePopulations(profile);
     }
 
-    // Enumerates every ordinary RoomServiceAccess blueprint plus every
-    // religion blueprint (Shrine/Temple, reached the same way religionOf()
-    // does it elsewhere in this mod, since they aren't RoomServiceAccess
-    // and need a separate pass), writing only entries whose
+    // Delegates enumeration to ThalRoomServiceRegistry (every blueprint
+    // whose capacity is tracked via RoomService at all - see that class's
+    // own comment for the ways this set does NOT line up with "rooms a
+    // player should plan capacity for"), and writes only the entries whose
     // liveCapacityPerSlot() clears MIN_CAPACITY_PER_SLOT. A blueprint with
     // no live data yet (the sentinel, or anything else below threshold) is
     // simply left absent rather than backfilled with a hypothetical value -
@@ -301,16 +298,8 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
     // changes in some future patch, defeating the point of it being a
     // captured, real observation.
     private void captureCapacitiesPerSlot(ThalCapacityProfile profile) {
-        for (RoomServiceAccess roomServiceAccess : RoomServiceAccess.ALL()) {
-            this.captureCapacity(profile, roomServiceAccess.room().key, roomServiceAccess.liveCapacityPerSlot());
-        }
-
-        for (ROOM_TEMPLE temple : SETT.ROOMS().TEMPLES.ALL) {
-            this.captureCapacity(profile, temple.service().room().key, temple.service().liveCapacityPerSlot());
-        }
-
-        for (ROOM_SHRINE shrine : SETT.ROOMS().TEMPLES.SHRINES) {
-            this.captureCapacity(profile, shrine.service().room().key, shrine.service().liveCapacityPerSlot());
+        for (RoomService service : ThalRoomServiceRegistry.roomServicesByKey().values()) {
+            this.captureCapacity(profile, service.room().key, service.liveCapacityPerSlot());
         }
     }
 

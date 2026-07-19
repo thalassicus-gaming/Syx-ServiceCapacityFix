@@ -523,7 +523,7 @@ public abstract class RoomService {
     }
 
     // Self-contained live tally of subjects currently eligible to generate
-    // demand for this specific blueprint: passes AI.modules().needs.has(hType)
+    // demand for this specific blueprint: passes AI.modules().needs.has(HTYPE)
     // (excludes Enemy/Rioter/Soldier/Prisoner/Deranged, checked once per
     // subject) and accessRequest(...) (Nobility/Tourist auto-access, the
     // Child-to-parent-class redirect, and per-race/HCLASS permission data
