@@ -1,8 +1,3 @@
-// PlacerItemSingle.java
-// Document Version 1.0.0
-// Creation date: 2026/07/13
-// Creator: Thalassicus
-
 package settlement.room.main.placement;
 
 import init.sprite.SPRITES;
@@ -33,34 +28,6 @@ import view.tool.PLACER_TYPE;
 import view.tool.PlacableFixed;
 import view.tool.PlacableMessages;
 import view.tool.PlacableMulti;
-
-//
-// ============================================================================
-// PLACER ITEM SINGLE - TAB REPLACED WITH COLON
-// ============================================================================
-// This is the construction-preview popup used by every fixed-template room
-// (Hearth, Well, Shrine, Speaker, Fight Pit, the depot/station rooms, and
-// any other room whose Constructor.java does not use a custom drawn area).
-// Confirmed by direct measurement: the stats loop's box.tab(7) call is a
-// fixed jump to a set pixel column (GBox.tab() = 40px * 7), designed around
-// short, uniform values sharing a column across MULTIPLE rows - the classic,
-// legitimate use of a tabstop. Every affected room here shows at most one or
-// two stat rows, most only one, so there is nothing for a column to align
-// against, and Jake's own values (a bare integer, a short "N (M)" pair) were
-// short enough that the resulting whitespace went unnoticed. This mod's own
-// longer capacity text made the gap (measured at 333 of 602px on an
-// unmodified Speaker tooltip, roughly 30 spaces' worth) impossible to miss.
-//
-// Since this popup fundamentally does not have the repeated, homogeneous
-// rows a tabstop is meant to align, the fix is architectural, not cosmetic:
-// replace the fixed-column tab with an inline "Label: " prefix on the label
-// itself, letting the value immediately follow at whatever width the label
-// actually needs. Label and value remain two separate box.add() calls
-// (rather than one merged string) specifically because GText holds a single
-// color for its entire buffer - merging them would lose the label's
-// lablify() styling being distinct from the value's own formatting.
-// ============================================================================
-//
 
 class PlacerItemSingle extends PlacableFixed {
    protected final RoomPlacer embryo;
@@ -334,7 +301,9 @@ class PlacerItemSingle extends PlacableFixed {
          double am = this.group.item(this.size(), this.rot()).stat(s);
          if (am != 0.0) {
             box.NL();
-            box.add(box.text().lablify().add(s.name()).add(": "));
+            // MOD START box.add(box.text().lablify().add(s.name()).add(": "));
+
+            // MOD END
             box.add(s.format(box.text(), am));
          }
       }

@@ -1,8 +1,3 @@
-// RoomServiceInstance.java
-// Document Version 1.0.1
-// Creation date: 2026/07/17
-// Creator: Thalassicus
-
 package settlement.room.service.module;
 
 import java.io.Serializable;

@@ -1,8 +1,3 @@
-// StageInstance.java
-// Document Version 1.0.0
-// Creation date: 2026/07/17
-// Creator: Thalassicus
-
 package settlement.room.service.stage;
 
 import settlement.misc.job.JOBMANAGER_HASER;

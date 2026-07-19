@@ -1,11 +1,12 @@
 // ROOM_BENCH.java
 // Document Version 1.0.4
 // Creation date: 2026/07/13
-// Creator: Thalassicus
+// Modified By: Thalassicus
 
 package settlement.room.infra.bench;
 
-import game.time.TIME;
+import game.time.TIME; // MOD
+import util.gui.misc.GText; // MOD
 import init.sprite.game.SheetType;
 import java.io.IOException;
 import settlement.main.SETT;
@@ -38,7 +39,6 @@ import snake2d.util.file.Json;
 import snake2d.util.misc.CLAMP;
 import snake2d.util.sets.LISTE;
 import util.gui.misc.GBox;
-import util.gui.misc.GText;
 import util.info.GFORMAT;
 import util.rendering.RenderData;
 import util.rendering.ShadowBatch;
@@ -107,6 +107,7 @@ import view.sett.ui.room.UIRoomModule;
 //
 
 public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHaser {
+   // MOD START
    // Not ¤-prefixed, deliberately: these are our own strings, not part of
    // Jake's own text, and ¤ appears to trigger some localization/caching
    // mechanism we haven't fully traced (confirmed to interfere with edits to
@@ -118,7 +119,7 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
 
    // See the class-level comment above for the full derivation.
    private static final double AVERAGE_VISIT_SECONDS = 93.5;
-
+   // MOD END
    private final ROOM_BENCH.MConstructor constructor;
    private final ROOM_BENCH.Instance instance;
    public final SFinderRoomService finder = new SFinderRoomService("Bench") {
@@ -186,6 +187,7 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
       this.instance = new ROOM_BENCH.Instance(init.m, this);
    }
 
+   // MOD START
    // Converts a seat count into the "present (all)" capacity pair. Both
    // values are always identical for benches - there is no present/all
    // distinction to make when there is no NEED-based competing total at
@@ -206,7 +208,7 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
       box.NL();
       box.text(CapacityDescription);
    }
-
+   // MOD END
    @Override
    protected void save(FilePutter f) {
    }
@@ -242,9 +244,11 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
       mm.add(new UIRoomModule() {
          @Override
          public void hover(GBox box, Room room, int rx, int ry) {
+            // MOD START
             box.NL();
             ROOM_BENCH.appendCapacityLine(box, room.area(rx, ry));
             box.NL();
+            // MOD END
             if (ROOM_BENCH.this.upgrades().max() > 0) {
                box.NL();
                box.text(Dic.¤¤Upgrade);
@@ -392,11 +396,12 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
       public RoomBlueprintImp blue() {
          return this.blue;
       }
-
+      // MOD START
       @Override
       public void placeInfo(GBox box, FurnisherItem item, int x1, int y1) {
          box.NL(8);
          ROOM_BENCH.appendCapacityLine(box, item.width() * item.height());
       }
+      // MOD END
    }
 }
