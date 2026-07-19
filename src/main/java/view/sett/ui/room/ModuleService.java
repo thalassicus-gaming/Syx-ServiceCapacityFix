@@ -23,7 +23,6 @@ import snake2d.util.sets.LISTE;
 import snake2d.util.sets.Stack;
 import snake2d.util.sprite.SPRITE;
 import snake2d.util.sprite.text.Str;
-import thalassicus.util.ThalSpeciesCapacity;
 import util.data.DOUBLE;
 import util.data.GETTER;
 import util.gui.misc.GBox;
@@ -48,30 +47,9 @@ final class ModuleService implements Modules.ModuleMaker {
     private static CharSequence ¤¤Load = "¤Load";
     private static CharSequence ¤¤Capacity = "¤Capacity";
     private static CharSequence ¤¤CapacityD = "¤An rough estimate of how many subjects that can be served.";
-    // Not ¤-prefixed deliberately: ModuleService.class is scanned by D.ts()
-    // (see the static block below), which appears to cache ¤-prefixed field
-    // text through some localization layer we haven't traced - editing
-    // ¤¤CapacityD's own string content stopped taking effect in-game after a
-    // rebuild, while the surrounding numeric logic updated correctly. Using a
-    // plain field name sidesteps whatever that caching keys on.
-    private static final CharSequence THAL_CAPACITY_DESCRIPTION =
-            "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one, increasing its effective capacity.";
     private static CharSequence ¤¤USAGE_DESC = "¤The highest load of this service during a day. Once full, it means there aren't enough services to meet your subjects demands. If low, it's an indication you can cut down on this service.";
     private static CharSequence ¤¤RADIUS = "¤Radius";
     private static CharSequence ¤¤RADIUSD = "¤All services operate within a radius. The radius is the max distance a subject is prepared to walk to get to a service.";
-    // Checked against the aggregate, blueprint-wide load() rather than any
-    // single room instance's own occupancy - a citizen turned away from one
-    // saturated room simply visits another nearby, so it's citywide load
-    // that matters, and that's also the exact quantity the capacity
-    // estimate's own denominator is built from.
-    private static final double SATURATION_LOAD_THRESHOLD = 0.9;
-    // Not ¤-prefixed, matching THAL_CAPACITY_DESCRIPTION's own note above on
-    // the D.ts() caching gotcha.
-    private static final CharSequence SATURATION_DISCLAIMER =
-            "* Over-estimating capacity due to high load.";
-    // Not ¤-prefixed, same reasoning as SATURATION_DISCLAIMER.
-    private static final CharSequence EVENT_DAY_DISCLAIMER =
-            "Event Day! High usage.";
     private static CharSequence stuff = ¤¤CapacityD;
     static {
         D.ts(ModuleService.class);
@@ -87,38 +65,6 @@ final class ModuleService implements Modules.ModuleMaker {
         }
     }
 
-    // Shared by every tooltip site that displays Capacity, appended directly
-    // below the number itself. Checked against capacityLoad() (the same
-    // figure totalMultiplier() itself divides by - a rolling max over the
-    // event cycle for Arena/Arenag/Speaker/Stage, plain load() for every
-    // other blueprint) rather than load() directly, so this disclaimer can
-    // never disagree with the number it's warning about. At or above
-    // SATURATION_LOAD_THRESHOLD, capacityPerSlot is derived from an
-    // artificially-capped observed peak rather than true (unconstrained)
-    // demand, which can only push the estimate too high, never too low - so
-    // the number itself is left untouched here (no soft cap, no formula
-    // switch, which would risk the displayed number flickering between two
-    // formulas near the threshold) and a plain disclaimer is appended
-    // instead.
-    private static void appendCapacityDisclaimer(GBox b, RoomService service) {
-        if (service.capacityLoad() > SATURATION_LOAD_THRESHOLD) {
-            b.NL();
-            b.text(ModuleService.SATURATION_DISCLAIMER);
-        }
-    }
-
-    // Companion to appendCapacityDisclaimer, appended right alongside it -
-    // the two are not mutually exclusive, since they answer different
-    // questions ("is this number possibly too optimistic" vs. "is today
-    // just an unusually busy day, nothing to worry about"). Only ever true
-    // for Arena/Arenag/Speaker/Stage (RoomService.isEventDayToday() returns
-    // false immediately for every other blueprint).
-    private static void appendEventDayDisclaimer(GBox b, RoomService service) {
-        if (service.isEventDayToday()) {
-            b.NL();
-            b.text(ModuleService.EVENT_DAY_DISCLAIMER);
-        }
-    }
 
     private final class I extends UIRoomModule {
         private final RoomService.ROOM_SERVICE_HASER p;
@@ -153,24 +99,12 @@ final class ModuleService implements Modules.ModuleMaker {
                     b.textL(ModuleService.¤¤TOTAL);
                     b.add(GFORMAT.i(b.text(), I.this.p.service().total()));
                     b.NL(8);
-                    b.textLL(ModuleService.¤¤Capacity);
-                    b.tab(6);
-                    double settlementAggregateCapacityRaw = I.this.p.service().total() * I.this.p.service().totalMultiplier();
-                    int settlementAggregateCapacity = (int) settlementAggregateCapacityRaw;
-                    b.add(GFORMAT.i(b.text(), settlementAggregateCapacity));
-                    ModuleService.appendCapacityDisclaimer(b, I.this.p.service());
-                    ModuleService.appendEventDayDisclaimer(b, I.this.p.service());
-                    b.NL();
-                    b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
+                    I.this.p.service().appendCapacityTooltip(b, I.this.p.service().total());
                     b.NL(8);
-                    // Lists any race whose need-rate for this service diverges from the
-                    // default, since the Capacity estimate above uses the default rate
-                    // and cannot reflect any city's actual species composition.
-                    ThalSpeciesCapacity.appendDivergenceLines(b, I.this.p.service().need, settlementAggregateCapacityRaw);
-                    b.textLL(ModuleService.¤¤RADIUS);
+                    b.textLL(¤¤RADIUS);
                     b.add(GFORMAT.i(b.text(), I.this.p.service().radius));
                     b.NL();
-                    b.text(ModuleService.¤¤RADIUSD);
+                    b.text(¤¤RADIUSD);
                 }
             };
             grid.add(h);
@@ -212,11 +146,7 @@ final class ModuleService implements Modules.ModuleMaker {
             box.textL(ModuleService.¤¤Load);
             box.add(GFORMAT.percInv(box.text(), i.service().load()));
             box.NL();
-            box.textL(ModuleService.¤¤Capacity);
-            int roomInstanceCapacity = (int) (i.service().total() * this.p.service().totalMultiplier());
-            box.add(GFORMAT.i(box.text(), roomInstanceCapacity));
-            ModuleService.appendCapacityDisclaimer(box, this.p.service());
-            ModuleService.appendEventDayDisclaimer(box, this.p.service());
+            this.p.service().appendCapacityTooltip(box, i.service().total());
         }
 
         @Override
@@ -273,24 +203,12 @@ final class ModuleService implements Modules.ModuleMaker {
                     b.tab(6);
                     text.add(GFORMAT.perc(b.text(), I.this.g(get).quality()));
                     b.NL(8);
-                    b.textLL(ModuleService.¤¤Capacity);
-                    b.tab(6);
-                    double roomInstanceCapacityRaw = i.total() * I.this.p.service().totalMultiplier();
-                    int roomInstanceCapacity = (int) roomInstanceCapacityRaw;
-                    text.add(GFORMAT.i(b.text(), roomInstanceCapacity));
-                    ModuleService.appendCapacityDisclaimer(b, I.this.p.service());
-                    ModuleService.appendEventDayDisclaimer(b, I.this.p.service());
-                    b.NL();
-                    b.text(ModuleService.THAL_CAPACITY_DESCRIPTION);
+                    I.this.p.service().appendCapacityTooltip(b, i.total());
                     b.NL(8);
-                    // Lists any race whose need-rate for this service diverges from the
-                    // default, since the Capacity estimate above uses the default rate
-                    // and cannot reflect any city's actual species composition.
-                    ThalSpeciesCapacity.appendDivergenceLines(b, I.this.p.service().need, roomInstanceCapacityRaw);
-                    b.textLL(ModuleService.¤¤RADIUS);
+                    b.textLL(¤¤RADIUS);
                     b.add(GFORMAT.i(b.text(), I.this.p.service().radius));
                     b.NL();
-                    b.text(ModuleService.¤¤RADIUSD);
+                    b.text(¤¤RADIUSD);
                 }
             };
             section.addRelBody(8, DIR.S, r);

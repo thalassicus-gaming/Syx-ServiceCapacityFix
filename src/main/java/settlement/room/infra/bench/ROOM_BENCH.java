@@ -113,8 +113,8 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
    // an existing ¤-prefixed field in ModuleService.java). This file has no
    // D.ts() call today, but the safer rule is to never use ¤ for anything we
    // author ourselves, regardless of whether a given file currently opts in.
-   private static CharSequence CapacityLabel = "Capacity";
-   private static CharSequence CapacityDescription = "An estimate of how many subjects this bench can serve per day. Bench visits occur during a subject's spare time, unlike other services.";
+   private static CharSequence CapacityLabel = "Capacity: ";
+   private static CharSequence CapacityDescription = "The number of subjects this bench can serve per day. Bench visits do not compete with other services for subject attention.";
 
    // See the class-level comment above for the full derivation.
    private static final double AVERAGE_VISIT_SECONDS = 93.5;
@@ -199,11 +199,9 @@ public final class ROOM_BENCH extends RoomBlueprintImp implements RoomFinderHase
    private static void appendCapacityLine(GBox box, double seatCount) {
       int capacity = (int)estimatedCapacity(seatCount);
       GText t = box.text();
-      t.add(CapacityLabel).add(": ");
+      t.add(CapacityLabel);
       GFORMAT.i(t, capacity);
-      t.add(" presently (");
-      GFORMAT.i(t, capacity);
-      t.add(" with all services)");
+      t.add(" (always)");
       box.add(t);
       box.NL();
       box.text(CapacityDescription);

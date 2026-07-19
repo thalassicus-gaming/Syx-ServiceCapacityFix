@@ -3,12 +3,13 @@
 // Creation date: 2026/07/13
 // Creator: Thalassicus
 
-package thalassicus.util;
+package thalassicus.capacity;
 
 import settlement.room.main.furnisher.Furnisher;
 import settlement.room.main.furnisher.FurnisherStat;
 import settlement.room.service.module.RoomService;
 import snake2d.util.datatypes.AREA;
+import util.gui.misc.GBox;
 import util.gui.misc.GText;
 import util.info.GFORMAT;
 
@@ -40,28 +41,37 @@ import util.info.GFORMAT;
 
 public class ThalServiceFurnisherStat extends FurnisherStat {
 
-  private static final CharSequence LABEL = "Capacity";
-  private static final CharSequence DESCRIPTION =
-      "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one.";
+    private static final CharSequence LABEL = "Capacity";
+    private static final CharSequence DESCRIPTION =
+            "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one.";
 
-  private final RoomService.ROOM_SERVICE_HASER room;
+    private final RoomService.ROOM_SERVICE_HASER room;
 
-  public ThalServiceFurnisherStat(Furnisher furnisher, RoomService.ROOM_SERVICE_HASER room) {
-    super(furnisher, LABEL, DESCRIPTION, 0.0);
-    this.room = room;
-  }
+    public ThalServiceFurnisherStat(Furnisher furnisher, RoomService.ROOM_SERVICE_HASER room) {
+        super(furnisher, LABEL, DESCRIPTION, 0.0);
+        this.room = room;
+    }
 
-  @Override
-  public double get(AREA area, double acc) {
-    return acc;
-  }
+    @Override
+    public double get(AREA area, double acc) {
+        return acc;
+    }
 
-  @Override
-  public GText format(GText t, double slotCount) {
-    GFORMAT.i(t, (long) slotCount);
-    t.add(" (");
-    GFORMAT.i(t, (long) (room.service().totalMultiplier() * slotCount));
-    t.add(")");
-    return t;
-  }
+    @Override
+    public GText format(GText t, double slotCount) {
+        appendCapacityText(t, (long) slotCount);
+        return t;
+    }
+    public void appendCapacityText(GText text, long totalSlots) {
+        GFORMAT.i(text.normalify(), (int) Math.ceil(totalSlots * room.service().liveCapacityPerSlot()));
+        text.lablify().add(" (Live)");
+        text.NL();
+
+        GFORMAT.i(text.normalify(), (int) Math.ceil(totalSlots * room.service().profileCapacityPerSlot()));
+        text.lablify().add(" (Profile)");
+        text.NL();
+
+        GFORMAT.i(text.normalify(), (int) Math.ceil(totalSlots * room.service().hypotheticalCapacityPerSlot()));
+        text.lablify().add(" (Estimate)");
+    }
 }

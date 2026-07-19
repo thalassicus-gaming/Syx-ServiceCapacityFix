@@ -1,13 +1,16 @@
 // RoomService.java
-// Document Version 1.2.4
+// Document Version 1.3.1
 // Creation date: 2026/07/12
 // Creator: Thalassicus
 
 package settlement.room.service.module;
 
+import game.GameDisposable;
 import game.audio.AUDIO;
 import game.audio.SoundRace;
 import game.time.TIME;
+import init.race.RACES;
+import init.race.Race;
 import init.religion.Religion;
 import init.type.HCLASS_RACE;
 import init.type.NEED;
@@ -32,14 +35,38 @@ import settlement.room.spirit.shrine.ROOM_SHRINE;
 import settlement.room.spirit.temple.ROOM_TEMPLE;
 import settlement.stats.STATS;
 import settlement.stats.colls.StatsReligion;
+import snake2d.LOG;
 import snake2d.util.file.FileGetter;
 import snake2d.util.file.FilePutter;
 import snake2d.util.file.Json;
 import snake2d.util.file.SAVABLE;
+import thalassicus.capacity.ThalCapacityProfile;
+import thalassicus.capacity.ThalCapacityProfileManager;
 import thalassicus.util.ThalRollingData;
 import thalassicus.util.ThalSavable;
+import util.gui.misc.GBox;
+import util.info.GFORMAT;
 
 public abstract class RoomService {
+    // Not ¤-prefixed deliberately: ModuleService.class is scanned by D.ts()
+    // (see the static block below), which appears to cache ¤-prefixed field
+    // text through some localization layer we haven't traced - editing
+    // ¤¤CapacityD's own string content stopped taking effect in-game after a
+    // rebuild, while the surrounding numeric logic updated correctly. Using a
+    // plain field name sidesteps whatever that caching keys on.
+    private static final CharSequence THAL_CAPACITY_DESCRIPTION =
+            "Services compete for a subject's limited time, so adding new types of services will reduce demand on this one, increasing its effective capacity.";
+    // Checked against the aggregate, blueprint-wide load() rather than any
+    // single room instance's own occupancy - a citizen turned away from one
+    // saturated room simply visits another nearby, so it's citywide load
+    // that matters, and that's also the exact quantity the capacity
+    // estimate's own denominator is built from.
+    private static final double SATURATION_LOAD_THRESHOLD = 0.9;
+    private static final CharSequence SATURATION_DISCLAIMER = "* Over-estimating capacity due to high load.";
+    private static final CharSequence EVENT_DAY_DISCLAIMER = "Event Day! High usage.";
+    public static final CharSequence CAPACITY_LIVE = "Capacity (Live):";
+    public static final CharSequence CAPACITY_PROFILE = "Capacity (Profile):";
+    public static final CharSequence CAPACITY_ESTIMATE = "Capacity (Estimate):";
     private int available = 0;
     private int total = 0;
     private double load;
@@ -234,12 +261,12 @@ public abstract class RoomService {
         return this.room;
     }
 
-    // Public in case this cached eligibility figure is useful elsewhere
-    // (matching the brief's own note that Jake's code might benefit from
-    // this mapping too). 0.0 for any blueprint whose daily rollover hasn't
-    // run yet this session, and for a religion blueprint whose owning
-    // Religion couldn't be resolved via religionOf() (see that method's own
-    // note - should not happen in practice).
+    // Public in case this cached eligibility figure is useful to other code
+    // beyond this class's own totalMultiplier() pipeline. 0.0 for any
+    // blueprint whose daily rollover hasn't run yet this session, and for a
+    // religion blueprint whose owning Religion couldn't be resolved via
+    // religionOf() (see that method's own note - should not happen in
+    // practice).
     public double lastEligibleDemandPopulation() {
         return this.lastEligibleDemandPopulation;
     }
@@ -251,42 +278,29 @@ public abstract class RoomService {
         this.lastEligibleDemandPopulation = value;
     }
 
-    // The peak-load figure actually used for the capacity estimate, in
-    // two tiers:
-    //   1. eventPeakLoadWindow's rolling max, once it actually has at least
-    //      one real sample pushed into it (sampleCount() > 0) - not merely
-    //      non-null, since the window is allocated eagerly in the
-    //      constructor for any qualifying blueprint, well before its first
-    //      real push. Checking non-null alone would return 0.0 here for
-    //      every event-boosted blueprint until its first daily rollover -
-    //      a needless trip straight to Jake's formula when a perfectly
-    //      good dailyPeakLoad is sitting right there unused.
-    //   2. dailyPeakLoad (load()'s own loadLast) - correct for every
-    //      ordinary blueprint always, and the right fallback for an event-
-    //      boosted one before its window has filled in.
-    // Falls through to Jake's original formula - handled by
-    // totalMultiplier() below - whenever this method returns 0.0
-    // (dailyPeakLoad itself unset yet either, e.g. a blueprint never used
-    // since the last save/load).
-    // Kept as a single accessor, rather than reading load() directly in two
-    // places, so the saturation disclaimer
-    // (ModuleService.appendCapacityDisclaimer) and the capacity formula
-    // itself (totalMultiplier(), below) can never disagree about which
-    // "peak" is under discussion. Always calls load() first regardless -
+    // Returns the peak-occupied fraction this blueprint should be judged
+    // against for capacity purposes, preferring a longer, event-cycle-aware
+    // signal wherever one is actually available:
+    //   1. eventPeakLoadWindow's rolling max, once it has at least one real
+    //      sample (sampleCount() > 0) - not merely non-null, since the
+    //      window is allocated eagerly in the constructor for any
+    //      qualifying blueprint, well before its first real push.
+    //   2. dailyPeakLoad (load()'s own loadLast) otherwise - correct for
+    //      every ordinary blueprint always, and the right interim reading
+    //      for an event-boosted one before its window has filled in.
+    // Contract: a return of 0.0 means no real peak has been observed yet -
+    // callers must treat that as "no live signal available" and fall back
+    // to a lower-priority estimate, never as a literal 0% load. This is
+    // also the single figure every other Load-related display in this mod
+    // should read from (rather than calling load() directly a second time),
+    // so none of them can ever disagree about which "peak" is under
+    // discussion.
+    // Always calls load() first regardless of which tier ends up used -
     // that call's rollover side effects (finalizing loadLast, refreshing
     // lastEligibleDemandPopulation, pushing into eventPeakLoadWindow) must
     // still happen on schedule even when its return value ends up
     // overridden below.
-    //
-    // Speaker/Stage previously had a hardcoded 0.0 exception here, since
-    // their load() was known-unreliable (RoomServiceInstance's own
-    // double-report artifact spuriously pegging the aggregate near 100%).
-    // That artifact is now fixed directly at the source
-    // (RoomServiceInstance.employeeDrivenSlotCountUpdate(), called from
-    // SpeakerInstance/StageInstance's setServices()), so the exception has
-    // been removed - these two blueprints now go through the same tiers as
-    // every other event-boosted room.
-    public double capacityLoad() {
+    public double eventAdjustedDailyPeakLoad() {
         double dailyPeakLoad = this.load();
         if (this.eventPeakLoadWindow != null && this.eventPeakLoadWindow.sampleCount() > 0) {
             return this.eventPeakLoadWindow.max();
@@ -295,48 +309,120 @@ public abstract class RoomService {
         return dailyPeakLoad;
     }
 
-    // Tries a direct, self-contained estimate first: if this blueprint has
-    // recorded any real occupancy (load() > 0.0) and has a cached eligible
-    // population figure (lastEligibleDemandPopulation, refreshed daily in
-    // load() - via countEligibleDemandPopulation() for ordinary
-    // RoomServiceAccess blueprints, or countEligibleReligionPopulation() for
-    // religion Shrine/Temple blueprints), divide that population by the
-    // aggregate peak-occupied fraction load() already tracks citywide. Both
-    // this.total() terms cancel out algebraically (supportedPopulation =
-    // demand / load(), then divided again by total() to convert back to a
-    // multiplier), so total() never actually appears in the result - only
-    // its cancellation matters. Falls through to Jake's original NEED-rate-
-    // based formula for any blueprint with no cached population yet (e.g.
-    // never used since the last save/load, or - for religion blueprints -
-    // religionOf() unable to resolve an owning Religion).
+    // Determines if this RoomService has the capability to satisfy NEEDs.
+    private boolean hasCapacity() {
+        return (this.need != null && this.total != 0);
+    }
+
+    // Capacity-per-slot can never fall below 1.0; it would indicate a slot is available, but cannot be filled.
+    // Schrodinger's physician bed. Any result at or below this threshold is therefore not a real capacity figure.
+    private static final double MIN_CAPACITY_PER_SLOT = 0.99;
+
+    // Returns a single, default capacity-per-slot value.
+    // DEPRECATED; call sites that still use this should be changed to call individual methods below.
+    @Deprecated
     public double totalMultiplier() {
-        if (this.need == null || this.total == 0) {
+        if (!hasCapacity()) {
             return 1.0;
         }
 
-        double aggregateLoad = this.capacityLoad();
+        double capacityPerSlot = liveCapacityPerSlot();
+        if (capacityPerSlot >= MIN_CAPACITY_PER_SLOT) {
+            return capacityPerSlot;
+        }
+
+        capacityPerSlot = profileCapacityPerSlot();
+        if (capacityPerSlot >= MIN_CAPACITY_PER_SLOT) {
+            return capacityPerSlot;
+        }
+
+        capacityPerSlot = hypotheticalCapacityPerSlot();
+        if (capacityPerSlot >= MIN_CAPACITY_PER_SLOT) {
+            return capacityPerSlot;
+        }
+
+        return 1.0;
+    }
+
+    // An estimate built entirely from this session's observed data.
+    // Returns a -1 sentinel if no estimate is available.
+    public double liveCapacityPerSlot() {
+        if (!hasCapacity()) {
+            return -1.0;
+        }
+
+        // aggregate city load = city used slots / city total slots
+        // peak city load = peak city used slots / city total slots
+        // city capacity = eligible population / peak city load
+        // capacity per slot = city capacity / total slots
+        double aggregateLoad = this.eventAdjustedDailyPeakLoad();
         if (aggregateLoad > 0.0 && this.lastEligibleDemandPopulation > 0.0) {
             double supportedPopulation = this.lastEligibleDemandPopulation / aggregateLoad;
             return supportedPopulation / this.total;
         }
+        return -1.0;
+    }
 
-        double ne = this.usage / STATS.SERVICE().needTot(this.need);
-        if (this.need instanceof NEED_E) {
-            return 1.0 / (ne * this.need.rate.get(HCLASS_RACE.clP(null, null)));
+    // Player-selectable capacity profiles for planning a city that doesn't
+    // exist yet. Returns a -1 sentinel if no manager exists yet, no profile
+    // is currently active, or the active profile has no entry for this
+    // blueprint - all three collapse to the same sentinel deliberately,
+    // since totalMultiplier() only needs to know whether to try this tier
+    // or fall through, not why it came up empty. Never validates the
+    // returned value against MIN_CAPACITY_PER_SLOT itself - a hand-edited
+    // profile file could contain an invalid entry, and totalMultiplier()'s
+    // own threshold check already catches that case and falls through to
+    // hypotheticalCapacityPerSlot(), the same safety net liveCapacityPerSlot()
+    // relies on rather than duplicating.
+    public double profileCapacityPerSlot() {
+        if (!hasCapacity()) {
+            return -1.0;
         }
 
-        double tot = 0.0;
+        ThalCapacityProfileManager manager = ThalCapacityProfileManager.instance();
+        if (manager == null) {
+            return -1.0;
+        }
 
-        for (int ni = 0; ni < NEEDS.ALLSIMPLE().size(); ni++) {
-            NEED o = NEEDS.ALLSIMPLE().get(ni);
-            tot += o.rate.get(HCLASS_RACE.clP(null, null));
+        ThalCapacityProfile activeProfile = manager.activeProfile();
+        if (activeProfile == null) {
+            return -1.0;
+        }
+
+        return activeProfile.capacityPerSlot(this.room.key, -1.0);
+    }
+
+    // The original NEED-rate-based capacity formula, unmodified in substance.
+    // Only local variable names were changed for readability.
+    // Functionality should be untouched for future compatibility.
+    // ALWAYS returns a valid capacity-per-slot. If a valid number cannot be found, logs an error and returns 1.0.
+    public double hypotheticalCapacityPerSlot() {
+        if (!hasCapacity()) {
+            return 1.0;
+        }
+
+        double needRateModifier = this.usage / STATS.SERVICE().needTot(this.need);
+        if (this.need instanceof NEED_E) {
+            return 1.0 / (needRateModifier * this.need.rate.get(HCLASS_RACE.clP(null, null)));
+        }
+
+        double needSum = 0.0;
+
+        for (int needIndex = 0; needIndex < NEEDS.ALLSIMPLE().size(); needIndex++) {
+            NEED myNeed = NEEDS.ALLSIMPLE().get(needIndex);
+            needSum += myNeed.rate.get(HCLASS_RACE.clP(null, null));
         }
 
         if (STATS.SERVICE().needTot(this.need) == 0.0) {
-            ne = this.usage;
+            needRateModifier = this.usage;
         }
 
-        return 1.0 / (ne * TIME.servicePerDay() * 0.5 * this.need.rate.get(HCLASS_RACE.clP(null, null)) / tot);
+        double capacityPerSlot = 1.0 / (needRateModifier * TIME.servicePerDay() * 0.5 * this.need.rate.get(HCLASS_RACE.clP(null, null)) / needSum);
+        if (capacityPerSlot < MIN_CAPACITY_PER_SLOT){
+            // A slot cannot have a capacity less than 1; it would indicate the slot is available but unfillable.
+            LOG.err("hypotheticalCapacityPerSlot() returning invalid capacity per slot: Type=" + room.type + ", capacityPerSlot="  + capacityPerSlot);
+        }
+        return capacityPerSlot >= MIN_CAPACITY_PER_SLOT ? capacityPerSlot : 1.0;
     }
 
     // Lazily built once and cached for the process lifetime: ROOM_TEMPLE and
@@ -344,12 +430,30 @@ public abstract class RoomService {
     // instance each one constructs (anonymously, inline) has no back-
     // reference to it - this map supplies that missing link without
     // shadowing ROOM_TEMPLE/ROOM_SHRINE just to add one field (a deliberate
-    // choice: adding the field directly on RoomService would be the more
+    // choice: adding the field directly would be the more
     // "correct" fix, but this mod scopes its shadow footprint deliberately
     // narrow). Safe to build lazily rather than statically at class-load
     // time, since totalMultiplier() is only ever called from UI code after
     // SETT.ROOMS() is fully constructed.
+    //
+    // Keyed by RoomService object identity (no equals()/hashCode() override
+    // on this class), so this cache MUST be reset whenever the game world is
+    // rebuilt (a new game, or returning to the main menu and loading a save)
+    // - otherwise it silently keeps referring to the previous session's now-
+    // discarded RoomService objects, and every lookup against the new
+    // session's genuinely-different objects misses forever. Reset via the
+    // same GameDisposable mechanism RoomServiceAccess.all/AIModule.all/
+    // ThalSavable.registry already use for the identical reason.
     private static Map<RoomService, Religion> religionByService;
+
+    static {
+        new GameDisposable() {
+            @Override
+            protected void dispose() {
+                religionByService = null;
+            }
+        };
+    }
 
     private static Religion religionOf(RoomService roomService) {
         if (religionByService == null) {
@@ -470,6 +574,106 @@ public abstract class RoomService {
 
         return count;
     }
+    public void appendCapacityTooltip(GBox box, long totalSlots) {
+        box.NL();
+        box.textLL(CAPACITY_LIVE);
+        box.tab(6);
+        double liveCapacityPerSlot = liveCapacityPerSlot();
+        if (liveCapacityPerSlot >= 1.0) {
+            box.add(GFORMAT.i(box.text(), (int)(totalSlots * liveCapacityPerSlot)));
+        } else {
+            box.text("N/A");
+        }
+
+        appendCapacityDisclaimer(box);
+        appendEventDayDisclaimer(box);
+
+        box.NL();
+        box.textLL(CAPACITY_PROFILE);
+        box.tab(6);
+        double profileCapacityPerSlot = profileCapacityPerSlot();
+        if (profileCapacityPerSlot >= 1.0) {
+            box.add(GFORMAT.i(box.text(), (int)(totalSlots * profileCapacityPerSlot)));
+        } else {
+            box.text("N/A");
+        }
+
+        box.NL();
+        box.textLL(CAPACITY_ESTIMATE);
+        box.tab(6);
+        double estimatedCapacityPerSlot = hypotheticalCapacityPerSlot();
+        box.add(GFORMAT.i(box.text(), (int)(totalSlots * estimatedCapacityPerSlot)));
+
+        appendDivergenceLines(box, need, total() * hypotheticalCapacityPerSlot());
+
+        box.NL();
+        box.text(THAL_CAPACITY_DESCRIPTION);
+    }
+
+    // Shared by every tooltip site that displays Capacity, appended directly
+    // below the number itself. Checked against capacityLoad() (the same
+    // figure totalMultiplier() itself divides by - a rolling max over the
+    // event cycle for Arena/Arenag/Speaker/Stage, plain load() for every
+    // other blueprint) rather than load() directly, so this disclaimer can
+    // never disagree with the number it's warning about. At or above
+    // SATURATION_LOAD_THRESHOLD, capacityPerSlot is derived from an
+    // artificially-capped observed peak rather than true (unconstrained)
+    // demand, which can only push the estimate too high, never too low - so
+    // the number itself is left untouched here (no soft cap, no formula
+    // switch, which would risk the displayed number flickering between two
+    // formulas near the threshold) and a plain disclaimer is appended
+    // instead.
+    public void appendCapacityDisclaimer(GBox b) {
+        if (eventAdjustedDailyPeakLoad() > SATURATION_LOAD_THRESHOLD) {
+            b.NL();
+            b.text(SATURATION_DISCLAIMER);
+        }
+    }
+
+    // Companion to appendCapacityDisclaimer, appended right alongside it -
+    // the two are not mutually exclusive, since they answer different
+    // questions ("is this number possibly too optimistic" vs. "is today
+    // just an unusually busy day, nothing to worry about"). Only ever true
+    // for Arena/Arenag/Speaker/Stage (RoomService.isEventDayToday() returns
+    // false immediately for every other blueprint).
+    public void appendEventDayDisclaimer(GBox b) {
+        if (isEventDayToday()) {
+            b.NL();
+            b.text(EVENT_DAY_DISCLAIMER);
+        }
+    }
+
+    private static final CharSequence NOT_USED_LABEL = "Never";
+
+    // Guards against a race whose rate is nonzero but vanishingly small
+    // (rather than a clean 0.0) - without this, dividing by a near-zero rate
+    // would produce an enormous, borderline-nonsensical number instead of
+    // correctly reporting the service as effectively unused by that race.
+    // Comfortably below any real rate value seen in this codebase's race
+    // files (typically in the 0.5-3.0 range).
+    private static final double MINIMUM_RATE_THRESHOLD = 0.00001;
+
+    public static void appendDivergenceLines(GBox tooltipBox, NEED serviceNeed, double baseCapacity) {
+        if (serviceNeed == null) {
+            return;
+        }
+
+        double baseRate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
+        for (Race currentRace : RACES.all()) {
+            if (currentRace.all(serviceNeed.rate).size() > 0) {
+                double raceRate = currentRace.bvalue(serviceNeed.rate);
+                tooltipBox.NL();
+                tooltipBox.textL(currentRace.info.names);
+                tooltipBox.tab(6);
+                if (raceRate <= MINIMUM_RATE_THRESHOLD) {
+                    tooltipBox.text(NOT_USED_LABEL);
+                } else {
+                    tooltipBox.add(GFORMAT.i(tooltipBox.text(), (int) (baseCapacity * baseRate / raceRate)));
+                }
+            }
+        }
+    }
+
 
     public abstract FSERVICE service(int var1, int var2);
 

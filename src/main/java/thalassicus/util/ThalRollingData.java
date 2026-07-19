@@ -197,7 +197,7 @@ public final class ThalRollingData implements SAVABLE {
         return this.sampleCount >= this.buffer.length;
     }
 
-    public int capacity() {
+    public int windowSize() {
         return this.buffer.length;
     }
 
