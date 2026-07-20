@@ -3,11 +3,10 @@
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
-package thalassicus.capacity;
+package thalassicus.util;
 
 import java.lang.reflect.Field;
 import java.util.Optional;
-import thalassicus.util.ThalsLogger;
 
 // Generic reflection helpers for reaching into Jake's own UI classes where no
 // public accessor exists - modeled on the ReflectionUtil pattern from Jake's

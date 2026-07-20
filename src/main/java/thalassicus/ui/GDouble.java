@@ -3,7 +3,7 @@
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
-package thalassicus.capacity;
+package thalassicus.ui;
 
 import init.sprite.UI.UI;
 import snake2d.SPRITE_RENDERER;
@@ -27,11 +27,6 @@ import util.gui.misc.GInput;
 // site. This mirrors the pattern Jake's own GButt.ButtPanel (clickA()) and
 // SFinderRoomService (get(tx, ty)) already use elsewhere in this codebase,
 // rather than introducing a new callback-interface style of our own.
-//
-// Moved from thalassicus.gui into thalassicus.capacity in v1.0.1, per
-// explicit instruction, to keep every class this deployment touches under
-// one package. Nothing about the class itself changed - it's still generic
-// enough to relocate again later if a second feature ends up wanting it.
 //
 // Three states, tracked entirely inside the private DecimalInputSprite:
 // NEUTRAL (buffer empty - either genuinely untouched, or the player is
