@@ -1,5 +1,5 @@
 // GLabeledValue.java
-// Document Version 1.0.0
+// Document Version 1.1.0
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
@@ -11,6 +11,7 @@ import java.util.function.Supplier;
 import init.sprite.UI.UI;
 import snake2d.SPRITE_RENDERER;
 import snake2d.util.gui.GuiSection;
+import snake2d.util.gui.renderable.RENDEROBJ;
 import util.gui.misc.GText;
 
 // Pairs one label with one editable value - nothing more. Deliberately does
@@ -73,7 +74,7 @@ public final class GLabeledValue extends GuiSection {
             }
         };
 
-        this.addRightC(0, this.label);
+        this.addRightC(0, new FixedWidthLabel(this.label, labelWidth));
         this.addRightC(LABEL_VALUE_MARGIN, this.valueInput);
     }
 
@@ -84,9 +85,61 @@ public final class GLabeledValue extends GuiSection {
         return this.valueInput.isValid();
     }
 
+    // Pure pass-through to GDouble's own existingValueSet() - closes the
+    // gap flagged when this class was first built ("no way yet to pre-
+    // seed a GLabeledValue with an already-stored value"). null means
+    // "no override for this key, track the live default"; non-null means
+    // "this profile has an explicit stored override." See GDouble's own
+    // existingValueSet() for the full reasoning on the single
+    // nullable-aware method design.
+    public void existingValueSet(Double existingValueOrNull) {
+        this.valueInput.existingValueSet(existingValueOrNull);
+    }
+
     @Override
     public void render(SPRITE_RENDERER r, float ds) {
         this.label.clear().add(this.labelTextSupplier.get());
         super.render(r, ds);
+    }
+
+    // BUG FOUND AND FIXED (2026/07/19): GText is a SPRITE, not a RENDEROBJ,
+    // so addRightC(0, this.label) was silently resolving to GuiSection's
+    // SPRITE overload rather than its RENDEROBJ one - which wraps a plain
+    // SPRITE in RENDEROBJ.Sprite. That wrapper is built to keep itself
+    // sized to its sprite's CURRENT content width, re-measuring on every
+    // single render() call (RENDEROBJ.Sprite.adjust(): "if body.width() !=
+    // sprite.width(), reposition to match"). Since this label starts empty
+    // by design and only gets real text on the first render (see render()
+    // above), the reserved layout width kept collapsing toward whatever
+    // the label's current text happened to measure - often near zero -
+    // rather than staying at the fixed labelWidth this class was
+    // explicitly built to respect. This wrapper exists specifically to
+    // NOT do that: a genuinely fixed body size, set once, that renders
+    // whatever the wrapped GText currently holds without ever letting the
+    // GText's own content-driven width feed back into layout.
+    private static final class FixedWidthLabel extends RENDEROBJ.RenderImp {
+
+        private final GText text;
+
+        // Height is measured once from the (possibly still-empty) GText
+        // at construction and is safe to treat as fixed, unlike width -
+        // font line height doesn't depend on string content the way
+        // rendered width does.
+        private FixedWidthLabel(GText text, int width) {
+            super(width, text.height());
+            this.text = text;
+        }
+
+        @Override
+        public void render(SPRITE_RENDERER r, float ds) {
+            // Deliberately renders within this wrapper's own fixed body
+            // bounds, not any width the text itself currently reports -
+            // GText.render()'s own setMaxWidth-based truncation (confirmed
+            // from GText.java: it substitutes X1 + this.maxWidth
+            // internally regardless of the X2 passed in) handles fitting
+            // long text within that space; this wrapper's job is only to
+            // guarantee that space never shrinks to begin with.
+            this.text.render(r, this.body.x1(), this.body.x2(), this.body.y1(), this.body.y2());
+        }
     }
 }

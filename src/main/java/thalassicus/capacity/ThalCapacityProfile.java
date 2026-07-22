@@ -1,5 +1,5 @@
 // ThalCapacityProfile.java
-// Document Version 1.1.0
+// Document Version 1.6.0
 // Creation date: 2026/07/18
 // Creator: Thalassicus
 
@@ -38,13 +38,14 @@ public final class ThalCapacityProfile {
     private final Map<String, Double> speciesPopulations = new HashMap<>();
     private final Map<String, Double> htypePopulations = new HashMap<>();
 
-    // An empty, brand-new profile with just a name and description. This is
-    // the correct starting state for a player-created "New" profile; a
-    // live-data snapshot is built by the Manager calling
-    // populateFromLiveData() against an instance built this same way.
-    public ThalCapacityProfile(String displayName, String description) {
+    // Private - blank() below is the public, named entry point.
+    private ThalCapacityProfile(String displayName, String description) {
         this.displayName = displayName;
         this.description = description;
+    }
+
+    public static ThalCapacityProfile blank(String displayName, String description) {
+        return new ThalCapacityProfile(displayName, description);
     }
 
     public String displayName() {
@@ -76,6 +77,15 @@ public final class ThalCapacityProfile {
         this.capacitiesPerSlot.put(blueprintKey, capacityPerSlot);
     }
 
+    // Removes a single entry rather than the whole-map clear() below -
+    // needed for "revert this one field to tracking the default" (backspace
+    // to empty, in the UI's own terms), which clear() was never meant to
+    // handle. A no-op if blueprintKey has no entry, matching Map.remove()'s
+    // own behavior rather than throwing.
+    public void capacityPerSlotRemove(String blueprintKey) {
+        this.capacitiesPerSlot.remove(blueprintKey);
+    }
+
     // Unmodifiable views, so external code (UI, the Manager) can read every
     // entry without being able to bypass capacityPerSlotSet()/the
     // species-population equivalents by mutating the map directly.
@@ -95,8 +105,20 @@ public final class ThalCapacityProfile {
         this.speciesPopulations.put(raceKey, population);
     }
 
+    // See capacityPerSlotRemove()'s own comment - same reasoning, applied
+    // to the species-population map.
+    public void speciesPopulationRemove(String raceKey) {
+        this.speciesPopulations.remove(raceKey);
+    }
+
     public void htypePopulationSet(String hTypeKey, double population) {
         this.htypePopulations.put(hTypeKey, population);
+    }
+
+    // See capacityPerSlotRemove()'s own comment - same reasoning, applied
+    // to the HTYPE-population map.
+    public void htypePopulationRemove(String hTypeKey) {
+        this.htypePopulations.remove(hTypeKey);
     }
 
     // Empties all three data maps without touching displayName/description.
@@ -109,6 +131,34 @@ public final class ThalCapacityProfile {
         this.htypePopulations.clear();
     }
 
+    // THE canonical "copy a profile's full state" logic - copies source's
+    // metadata and all three maps into this object IN PLACE, without
+    // touching this object's own identity. Needed anywhere an object's
+    // reference must stay stable for the whole program (ThalCapacityUI's
+    // own scratchProfile, permanently captured by every GDouble commit
+    // lambda) but its data still needs replacing wholesale from a
+    // different source. deepCopy() below delegates to this rather than
+    // keeping its own separate copy of the same logic.
+    public void copyFrom(ThalCapacityProfile source) {
+        this.displayName = source.displayName;
+        this.description = source.description;
+        this.clear();
+        copyMapsInto(source, this);
+    }
+
+    // A blank profile, immediately copied into via copyFrom() above - not
+    // a second, independent implementation. The two exist side by side
+    // because callers need different things: sometimes a genuinely new,
+    // independent object (the Manager's own stored-profile collection),
+    // sometimes an existing object's identity has to stay put while its
+    // data gets replaced (copyFrom()'s own case). Same underlying
+    // operation either way, just two entry points for the two situations.
+    public static ThalCapacityProfile deepCopy(ThalCapacityProfile profileToCopy) {
+        ThalCapacityProfile copy = ThalCapacityProfile.blank("", "");
+        copy.copyFrom(profileToCopy);
+        return copy;
+    }
+
     // Produces a new profile with sourceProfile's data overwriting
     // destinationProfile's wherever the two overlap - every field,
     // metadata included. Neither input is mutated; only newProfile is ever
@@ -117,18 +167,20 @@ public final class ThalCapacityProfile {
     // conflict directly in the parameter order/names, rather than needing
     // an extra boolean to say which direction the overwrite goes.
     public static ThalCapacityProfile merge(ThalCapacityProfile sourceProfile, ThalCapacityProfile destinationProfile) {
-        ThalCapacityProfile newProfile = new ThalCapacityProfile(destinationProfile.displayName, destinationProfile.description);
-        newProfile.capacitiesPerSlot.putAll(destinationProfile.capacitiesPerSlot);
-        newProfile.speciesPopulations.putAll(destinationProfile.speciesPopulations);
-        newProfile.htypePopulations.putAll(destinationProfile.htypePopulations);
-
+        ThalCapacityProfile newProfile = ThalCapacityProfile.deepCopy(destinationProfile);
         newProfile.displayName = sourceProfile.displayName;
         newProfile.description = sourceProfile.description;
-        newProfile.capacitiesPerSlot.putAll(sourceProfile.capacitiesPerSlot);
-        newProfile.speciesPopulations.putAll(sourceProfile.speciesPopulations);
-        newProfile.htypePopulations.putAll(sourceProfile.htypePopulations);
-
+        copyMapsInto(sourceProfile, newProfile);
         return newProfile;
+    }
+
+    // Shared by copyFrom() and merge() above - copies all three maps'
+    // current entries into destination via putAll, so destination never
+    // shares a backing map instance with source.
+    private static void copyMapsInto(ThalCapacityProfile source, ThalCapacityProfile destination) {
+        destination.capacitiesPerSlot.putAll(source.capacitiesPerSlot);
+        destination.speciesPopulations.putAll(source.speciesPopulations);
+        destination.htypePopulations.putAll(source.htypePopulations);
     }
 
     // Converts this profile's own state into a JsonE structure - no
@@ -153,7 +205,7 @@ public final class ThalCapacityProfile {
     public static ThalCapacityProfile deserialize(Json json) {
         String displayName = json.text("DISPLAY_NAME", "");
         String description = json.text("DESCRIPTION", "");
-        ThalCapacityProfile profile = new ThalCapacityProfile(displayName, description);
+        ThalCapacityProfile profile = ThalCapacityProfile.blank(displayName, description);
         readJsonBlock(json, "CAPACITIES_PER_SLOT", profile.capacitiesPerSlot);
         readJsonBlock(json, "SPECIES", profile.speciesPopulations);
         readJsonBlock(json, "HTYPES", profile.htypePopulations);

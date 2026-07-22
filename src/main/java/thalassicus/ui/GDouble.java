@@ -1,5 +1,5 @@
 // GDouble.java
-// Document Version 1.0.1
+// Document Version 1.0.2
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
@@ -113,14 +113,25 @@ public abstract class GDouble extends GInput {
     // per-row reset button.
     protected abstract void revertToDefault();
 
-    // Pre-populates this box from a value the profile already has stored -
-    // distinct from committedValueSet() above, which only ever flows
-    // outward (this box telling the caller what the player typed). Bypasses
-    // acceptChar()'s own filtering entirely, since this is the caller
-    // supplying a known-good number, not a player keystroke.
-    public final void existingValueSet(double existingValue) {
-        this.inputSprite.textSet(existingValue);
-        this.inputSprite.currentStateSet(DecimalInputSprite.State.VALID);
+    // Pre-populates this box from a value the profile already has stored,
+    // or clears it back to tracking the live default if null - distinct
+    // from committedValueSet() above, which only ever flows outward (this
+    // box telling the caller what the player typed). A single nullable-
+    // aware method rather than two separate ones (a "set" and a "revert")
+    // so every call site collapses to one line instead of an if/else -
+    // null meaning "no override" matches the same convention
+    // ThalCapacityProfile itself already uses (absence in the map, not a
+    // sentinel value, means "track the default"), rather than inventing a
+    // different one here. Bypasses acceptChar()'s own filtering entirely
+    // either way, since this is the caller supplying a known state, not a
+    // player keystroke.
+    public final void existingValueSet(Double existingValueOrNull) {
+        if (existingValueOrNull == null) {
+            this.inputSprite.textClear();
+        } else {
+            this.inputSprite.textSet(existingValueOrNull);
+            this.inputSprite.currentStateSet(DecimalInputSprite.State.VALID);
+        }
     }
 
     // True whenever the current buffer would NOT block a profile save -
@@ -269,6 +280,17 @@ public abstract class GDouble extends GInput {
         // locale.
         private void textSet(double value) {
             this.text().clear().add(value, DECIMAL_PLACES);
+        }
+
+        // Counterpart to textSet() above - empties the buffer and resets
+        // to NEUTRAL directly, rather than going through change() (which
+        // would work, since change() already treats an empty buffer as
+        // NEUTRAL, but this is more direct about what's actually happening:
+        // an external caller declaring "no override," not a player
+        // clearing a field themselves).
+        private void textClear() {
+            this.text().clear();
+            this.currentState = DecimalInputSprite.State.NEUTRAL;
         }
 
         // Confirmed against Str.java: it does implement CharSequence, and
