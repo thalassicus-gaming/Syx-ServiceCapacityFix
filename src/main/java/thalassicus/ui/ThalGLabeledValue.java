@@ -27,7 +27,7 @@ import util.gui.misc.GText;
 // No awareness of ThalCapacityProfile, blueprint keys, RoomService, or
 // anything from settlement.* - same standard already set for GDouble and
 // GSlidableViewportVertical.
-public final class GLabeledValue extends GuiSection {
+public final class ThalGLabeledValue extends GuiSection {
 
     // Purely a visual layout choice internal to pairing a label with its
     // value - not domain-specific, so a small fixed constant rather than a
@@ -37,12 +37,12 @@ public final class GLabeledValue extends GuiSection {
 
     private final Supplier<CharSequence> labelTextSupplier;
     private final GText label;
-    private final GDouble valueInput;
+    private final ThalGDouble valueInput;
 
     // Two decimal places by default - matches this class's original,
     // pre-decimalPlaces-parameter behavior exactly, so every existing
     // caller (capacity-per-slot cells) needs no changes at all.
-    public GLabeledValue(
+    public ThalGLabeledValue(
             double minimumValue,
             double maximumValue,
             int labelWidth,
@@ -58,7 +58,7 @@ public final class GLabeledValue extends GuiSection {
     // GDouble's own identical parameter position - this class doesn't
     // interpret the value itself, just passes it straight through to the
     // GDouble it wraps.
-    public GLabeledValue(
+    public ThalGLabeledValue(
             double minimumValue,
             double maximumValue,
             int decimalPlaces,
@@ -77,7 +77,7 @@ public final class GLabeledValue extends GuiSection {
         // computed fresh on render.
         this.label = new GText(UI.FONT().S, "").setMaxWidth(labelWidth);
 
-        this.valueInput = new GDouble(minimumValue, maximumValue, decimalPlaces) {
+        this.valueInput = new ThalGDouble(minimumValue, maximumValue, decimalPlaces) {
             @Override
             protected double liveDefaultValue() {
                 return defaultValueSupplier.getAsDouble();
@@ -94,8 +94,8 @@ public final class GLabeledValue extends GuiSection {
             }
         };
 
-        this.addRightC(0, new FixedWidthLabel(this.label, labelWidth));
-        this.addRightC(LABEL_VALUE_MARGIN, this.valueInput);
+        this.addRightC(0, this.valueInput);
+        this.addRightC(LABEL_VALUE_MARGIN, new FixedWidthLabel(this.label, labelWidth));
     }
 
     // Pure delegation - lets a caller aggregate Save-eligibility across a

@@ -30,11 +30,7 @@ import snake2d.util.gui.GuiSection;
 import snake2d.util.gui.clickable.CLICKABLE;
 import snake2d.util.sprite.SPRITE;
 import snake2d.util.sprite.text.StringInputSprite;
-import thalassicus.ui.GLabeledValue;
-import thalassicus.ui.GSlidableViewportVertical;
-import thalassicus.ui.ThalGDropDown;
-import thalassicus.ui.ThalGInput;
-import thalassicus.ui.ThalIPromtButtons;
+import thalassicus.ui.*;
 import thalassicus.util.ThalReflectionUtil;
 import thalassicus.util.ThalsLogger;
 import util.gui.misc.GBox;
@@ -74,6 +70,11 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     private static final double POPULATION_MAXIMUM = 999999.0;
     private static final int CAPACITY_DECIMAL_PLACES = 2;
     public static final int DESCRIPTION_MIN_CHARACTERS = 10;
+    private static final int HEADER_TABLE_MARGIN_TOP = 32;
+    private static final int HEADER_TABLE_MARGIN_BOTTOM = 8;
+    private static final String CAPACITY_EXPLANATION = "Multiplied by slot count to get room capacity.";
+    private static final String SPECIES_EXPLANATION = "Information about city. Not used for calculations.";
+    private static final String HTYPE_EXPLANATION = "Information about city. Not used for calculations.";
     // Species/HTYPE population counts are genuinely whole numbers - 0
     // decimal places makes their own GDouble cells reject a typed decimal
     // point outright, not just round one away after the fact.
@@ -90,7 +91,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     private static final String RESERVED_NAME_LIVE_DATA = "<Live Data>";
     private GPanel mainPanel;
     private final GuiSection topSection = new GuiSection();
-    private GSlidableViewportVertical contentViewport;
+    private ThalGSlidableViewportVertical contentViewport;
     private Inter inter;
     // A single, persistent instance reused across every activation, the
     // same way VIEW.inters().yesNo/.fullScreen are also long-lived shared
@@ -128,10 +129,10 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     private final Map<ThalCapacityProfile, ProfileDropdownEntry> dropdownEntriesByProfile = new HashMap<>();
     private ThalGInput displayNameField;
     private ThalGInput descriptionField;
-    private final List<GLabeledValue> allLabeledValues = new ArrayList<>();
-    private Map<String, GLabeledValue> capacityCellsByKey;
-    private Map<String, GLabeledValue> speciesCellsByKey;
-    private Map<String, GLabeledValue> htypeCellsByKey;
+    private final List<ThalGLabeledValue> allLabeledValues = new ArrayList<>();
+    private Map<String, ThalGLabeledValue> capacityCellsByKey;
+    private Map<String, ThalGLabeledValue> speciesCellsByKey;
+    private Map<String, ThalGLabeledValue> htypeCellsByKey;
     private final ThalCapacityProfile scratchProfile = ThalCapacityProfile.blank("", "");
 
     // The real state per the design spec - null means the editor isn't
@@ -191,7 +192,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         this.descriptionField = this.buildTextField("Description", descriptionCapacity, this.scratchProfile::descriptionSet);
         this.buildTopSection();
         int viewportY = this.topSection.body().height() + SECTION_MARGIN;
-        this.contentViewport = new GSlidableViewportVertical(panelWidth, panelHeight - viewportY, VIEWPORT_WHEEL_SCROLL_STEP);
+        this.contentViewport = new ThalGSlidableViewportVertical(panelWidth, panelHeight - viewportY, VIEWPORT_WHEEL_SCROLL_STEP);
         this.mainPanel.setBig();
         this.mainPanel.setTitle("Capacity Profile Editor");
         this.mainPanel.setCloseAction(this::closePanel);
@@ -842,16 +843,14 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // Load and Rename from the original CRUD list are both gone here -
     // Load has no distinct meaning once dropdown selection already does
     // that job, and Rename is now an implicit consequence of Save
-    // detecting a changed name rather than its own separate action. Merge
-    // stays a stub - its own design (static vs. mutating instance method)
-    // is still being decided.
+    // detecting a changed name rather than its own separate action.
     private void buildTopSection() {
         GuiSection managementRow = new GuiSection();
         managementRow.addRightC(0, this.profileDropdown);
         managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildNewButton());
         managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildDuplicateButton());
         managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildSaveButton());
-        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildStubButton("Merge"));
+        //managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildStubButton("Merge")); // TODO
         managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildDeleteButton());
         managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildActivateButton());
         managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.activeProfileLabel);
@@ -870,6 +869,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
             return;
         }
         this.contentViewport.contentAdd(this.sectionHeader("Capacity Per Slot"));
+        this.contentViewport.contentAdd(new GText(UI.FONT().S, CAPACITY_EXPLANATION).normalify(), HEADER_TABLE_MARGIN_BOTTOM);
         // hypotheticalCapacityPerSlot() is a dense, always-available formula
         // result - unlike live/profile data, it never depends on anything
         // that could change frame-to-frame (mod data and formulas load
@@ -889,7 +889,8 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 service -> service.hypotheticalCapacityPerSlot(),
                 this.scratchProfile::capacityPerSlotSet,
                 this.scratchProfile::capacityPerSlotRemove);
-        this.contentViewport.contentAdd(this.sectionHeader("Species Population"));
+        this.contentViewport.contentAdd(this.sectionHeader("Species Population"), HEADER_TABLE_MARGIN_TOP);
+        this.contentViewport.contentAdd(new GText(UI.FONT().S, SPECIES_EXPLANATION).normalify(), HEADER_TABLE_MARGIN_BOTTOM);
         // Flat 0.0 - a settlement starts with no population at all; there
         // is no dense formula to fall back to the way capacity has one.
         this.speciesCellsByKey = this.buildRows(RACES.all(), POPULATION_MINIMUM, POPULATION_MAXIMUM, POPULATION_DECIMAL_PLACES,
@@ -898,7 +899,8 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 race -> 0.0,
                 this.scratchProfile::speciesPopulationSet,
                 this.scratchProfile::speciesPopulationRemove);
-        this.contentViewport.contentAdd(this.sectionHeader("HTYPE Population"));
+        this.contentViewport.contentAdd(this.sectionHeader("Subject Type Population"), HEADER_TABLE_MARGIN_TOP);
+        this.contentViewport.contentAdd(new GText(UI.FONT().S, HTYPE_EXPLANATION).normalify(), HEADER_TABLE_MARGIN_BOTTOM);
         this.htypeCellsByKey = this.buildRows(HTYPES.ALL(), POPULATION_MINIMUM, POPULATION_MAXIMUM, POPULATION_DECIMAL_PLACES,
                 hType -> hType.key,
                 hType -> hType.name,
@@ -907,17 +909,17 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 this.scratchProfile::htypePopulationRemove);
         this.isContentBuilt = true;
     }
-    private <T> Map<String, GLabeledValue> buildRows(Iterable<T> sourceItems, double minimumValue, double maximumValue, int decimalPlaces,
-                                                     Function<T, String> keyExtractor,
-                                                     Function<T, CharSequence> labelExtractor,
-                                                     ToDoubleFunction<T> defaultValueExtractor,
-                                                     BiConsumer<String, Double> valueCommitter,
-                                                     Consumer<String> valueReverter) {
+    private <T> Map<String, ThalGLabeledValue> buildRows(Iterable<T> sourceItems, double minimumValue, double maximumValue, int decimalPlaces,
+                                                         Function<T, String> keyExtractor,
+                                                         Function<T, CharSequence> labelExtractor,
+                                                         ToDoubleFunction<T> defaultValueExtractor,
+                                                         BiConsumer<String, Double> valueCommitter,
+                                                         Consumer<String> valueReverter) {
         List<T> items = new ArrayList<>();
         for (T item : sourceItems) {
             items.add(item);
         }
-        Map<String, GLabeledValue> cellsByKey = new HashMap<>();
+        Map<String, ThalGLabeledValue> cellsByKey = new HashMap<>();
         for (int rowStart = 0; rowStart < items.size(); rowStart += CELLS_PER_ROW) {
             GuiSection row = new GuiSection();
             int rowEnd = Math.min(rowStart + CELLS_PER_ROW, items.size());
@@ -929,7 +931,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 // why re-querying this every render would be pointless
                 // work for a value that can never change.
                 double defaultValue = defaultValueExtractor.applyAsDouble(item);
-                GLabeledValue cell = new GLabeledValue(
+                ThalGLabeledValue cell = new ThalGLabeledValue(
                         minimumValue,
                         maximumValue,
                         decimalPlaces,
@@ -949,7 +951,12 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 cellsByKey.put(key, cell);
                 row.addRightC(i == rowStart ? 0 : CELL_HORIZONTAL_MARGIN, cell);
             }
-            this.contentViewport.contentAdd(row);
+            // Only the FIRST row-group of a table gets the extra margin -
+            // that's the one sitting directly below this table's own
+            // section header. Every subsequent row-group stays tight
+            // against the one above it, same as before.
+            int topMargin = rowStart == 0 ? HEADER_TABLE_MARGIN_BOTTOM : 0;
+            this.contentViewport.contentAdd(row, topMargin);
         }
         return cellsByKey;
     }
@@ -970,7 +977,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // here is expected to be rare in practice.
     private String invalidCellLabels() {
         StringBuilder builder = new StringBuilder();
-        for (GLabeledValue cell : this.allLabeledValues) {
+        for (ThalGLabeledValue cell : this.allLabeledValues) {
             if (!cell.isValid()) {
                 if (builder.length() > 0) {
                     builder.append(", ");
@@ -995,8 +1002,8 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         }
     }
 
-    private void pushCellsFrom(Map<String, GLabeledValue> cellsByKey, Map<String, Double> values) {
-        for (Map.Entry<String, GLabeledValue> entry : cellsByKey.entrySet()) {
+    private void pushCellsFrom(Map<String, ThalGLabeledValue> cellsByKey, Map<String, Double> values) {
+        for (Map.Entry<String, ThalGLabeledValue> entry : cellsByKey.entrySet()) {
             entry.getValue().existingValueSet(values.get(entry.getKey()));
         }
     }
@@ -1102,7 +1109,14 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // inference broke the moment a SECOND null-backed sentinel
     // (<New Profile>) needed to coexist with the original one (<Live
     // Data>); a single boolean can't distinguish three states.
-    private static final class ProfileDropdownEntry extends CLICKABLE.ClickableAbs {
+    // Implements ThalDropDownEntry so ThalGDropDown can constrain this
+    // entry's own available width when rendering it as the selected entry
+    // in the closed box - see ThalDropDownEntry's own header comment for
+    // why this can't be done from ThalGDropDown's side at all (RECTANGLEE,
+    // what CLICKABLE.body() narrows down to, has no resize capability;
+    // only this.body directly, reachable only from inside this class,
+    // does).
+    private static final class ProfileDropdownEntry extends CLICKABLE.ClickableAbs implements ThalDropDownEntry {
 
         private enum Kind {
             STORED,
@@ -1153,6 +1167,19 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
             this.label.clear().add(updatedProfile.displayName());
         }
 
+        // The actual fix for the right-alignment/overflow bug: this.body,
+        // accessed directly here rather than through the narrower
+        // RECTANGLEE the CLICKABLE interface exposes, is the concrete Rec
+        // field - the only thing in this whole relationship that can
+        // genuinely resize. ThalGDropDown.render() calls this instead of
+        // trying (and, before this fix, failing) to constrain width itself
+        // from outside via a pair of moveX1()/moveX2() calls that were
+        // both pure translations, not resizes.
+        @Override
+        public void availableWidthSet(int width) {
+            this.body.setWidth(width);
+        }
+
         // Uses the 4-arg (X1, X2, Y1, Y2) GText overload, not the plain
         // (x, y) one this used before - that overload internally clips to
         // this.label's own maxWidth (confirmed elsewhere in this project:
@@ -1168,6 +1195,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         // render() comment). Re-deriving here means this entry doesn't
         // need to know which context it's currently in - it just always
         // truncates to whatever space it's actually been given.
+
         @Override
         protected void render(SPRITE_RENDERER r, float ds, boolean isActive, boolean isSelected, boolean isHovered) {
             this.label.setMaxWidth(this.body.width() - 8);

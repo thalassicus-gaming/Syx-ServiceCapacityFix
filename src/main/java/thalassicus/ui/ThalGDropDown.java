@@ -42,7 +42,7 @@ import view.main.VIEW;
 // a more fragile, harder-to-follow coupling than owning a small, fully
 // understood copy of a ~200-line class used in exactly one place in the
 // base game to begin with.
-public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs implements CLICKABLE {
+public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLICKABLE.ClickableAbs implements CLICKABLE {
 
     // 5px above and below the selected entry's own text - previously the
     // box's own height was font.height() + 2 (an unexplained, minimal
@@ -126,23 +126,23 @@ public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs i
         if (this.selected != null) {
             int x1 = this.selected.body().x1();
             int y1 = this.selected.body().y1();
-            int x2 = this.selected.body().x2();
+            int width = this.selected.body().width();
             this.selected.body().centerY(this.body);
+            // moveX1() alone correctly repositions the entry's left edge
+            // while preserving its CURRENT (still natural/popup-sized)
+            // width - confirmed from Rec.setWidth()'s own behavior via
+            // DIR.reposition()'s west-anchored branch, which calls
+            // setWidth() alone with no follow-up move, implying setWidth()
+            // itself already preserves x1. availableWidthSet() below is
+            // what actually constrains the entry's own width; ordering
+            // position first, resize second, means the resize correctly
+            // shrinks FROM the position moveX1() just established, rather
+            // than from wherever x1 happened to be beforehand.
             this.selected.body().moveX1(this.body.x1() + HORIZONTAL_TEXT_MARGIN);
-            // RECTANGLEE has no width-setter of its own - every mutator it
-            // declares moves a position/edge, never a dimension directly
-            // (moveX1/moveX2/moveC/centerX, etc.), and only the separate,
-            // concrete DIMENSION.Imp class happens to expose widthSet() -
-            // not something reachable through this interface type without
-            // an unconfirmed cast. Achieves the same effect through
-            // moveX2() instead, which IS on RECTANGLEE: since width is
-            // just x2() - x1(), moving the right edge to this.body's own
-            // x2() minus the reserved arrow space constrains width
-            // identically, using only the confirmed public interface.
-            this.selected.body().moveX2(this.body.x2() - ARROW_ICON_RESERVED_WIDTH);
+            this.selected.availableWidthSet(this.body.width() - HORIZONTAL_TEXT_MARGIN - ARROW_ICON_RESERVED_WIDTH);
             this.selected.render(r, ds);
+            this.selected.availableWidthSet(width);
             this.selected.body().moveX1Y1(x1, y1);
-            this.selected.body().moveX2(x2);
         }
     }
 

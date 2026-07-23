@@ -29,7 +29,7 @@ import view.main.VIEW;
 // RENDEROBJs vertically and let the player pan over the result. This
 // mirrors the same "low-level data structure, no interpretation" standard
 // set for Cell.
-public class GSlidableViewportVertical extends GuiSection {
+public class ThalGSlidableViewportVertical extends GuiSection {
 
     // GSliderVer's own "size" constructor parameter only sizes its middle
     // draggable track - the two end-arrow buttons (b1/b2 in GSliderVer's
@@ -77,7 +77,7 @@ public class GSlidableViewportVertical extends GuiSection {
     // amount here would be exactly the kind of premature, content-blind
     // guess this class is trying to avoid. The caller knows its own row
     // height; this class does not.
-    public GSlidableViewportVertical(int width, int height, int wheelScrollStep) {
+    public ThalGSlidableViewportVertical(int width, int height, int wheelScrollStep) {
         this.wheelScrollStep = wheelScrollStep;
         this.body().setDim(width, height);
 
@@ -105,7 +105,10 @@ public class GSlidableViewportVertical extends GuiSection {
     // for building rows/cells of the right width themselves; this class
     // does not resize or otherwise reach into whatever it's handed.
     public void contentAdd(RENDEROBJ content) {
-        this.contentSection.addDown(0, content);
+        this.contentAdd(content, 0);
+    }
+    public void contentAdd(RENDEROBJ content, int topMargin) {
+        this.contentSection.addDown(topMargin, content);
         this.recalculateOverflow();
     }
 
@@ -118,7 +121,10 @@ public class GSlidableViewportVertical extends GuiSection {
     // trick themselves - this way it's handled the same way GuiSection
     // already handles it.
     public void contentAdd(SPRITE content) {
-        this.contentSection.addDown(VERTICAL_CONTENT_MARGIN, content);
+        this.contentAdd(content, 0);
+    }
+    public void contentAdd(SPRITE content, int topMargin) {
+        this.contentSection.addDown(topMargin, content);
         this.recalculateOverflow();
     }
 
@@ -230,7 +236,7 @@ public class GSlidableViewportVertical extends GuiSection {
         @Override
         public void set(int t) {
             super.set(t);
-            GSlidableViewportVertical.this.applyScrollOffset();
+            ThalGSlidableViewportVertical.this.applyScrollOffset();
         }
     }
 }

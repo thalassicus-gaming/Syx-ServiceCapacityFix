@@ -67,6 +67,7 @@ public abstract class RoomService {
     public static final CharSequence CAPACITY_LIVE = "Capacity (Live):";
     public static final CharSequence CAPACITY_PROFILE = "Capacity (Profile):";
     public static final CharSequence CAPACITY_ESTIMATE = "Capacity (Estimate):";
+    public static final CharSequence SPECIES_ESTIMATES = "Species Capacity (Profile):";
     private int available = 0;
     private int total = 0;
     private double load;
@@ -574,7 +575,7 @@ public abstract class RoomService {
         return count;
     }
     public void appendCapacityTooltip(GBox box, long totalSlots) {
-        box.NL();
+        box.NL(8);
         box.textLL(CAPACITY_LIVE);
         box.tab(6);
         double liveCapacityPerSlot = liveCapacityPerSlot();
@@ -603,10 +604,11 @@ public abstract class RoomService {
         double estimatedCapacityPerSlot = hypotheticalCapacityPerSlot();
         box.add(GFORMAT.i(box.text(), (int)(totalSlots * estimatedCapacityPerSlot)));
 
-        appendDivergenceLines(box, need, total() * totalMultiplier());
+        appendDivergenceLines(box, need, totalSlots * (profileCapacityPerSlot >= 1.0 ? profileCapacityPerSlot : estimatedCapacityPerSlot));
 
         box.NL();
         box.text(THAL_CAPACITY_DESCRIPTION);
+        box.NL(8);
     }
 
     // Shared by every tooltip site that displays Capacity, appended directly
@@ -642,7 +644,7 @@ public abstract class RoomService {
         }
     }
 
-    private static final CharSequence NOT_USED_LABEL = "Never";
+    private static final CharSequence NOT_USED_LABEL = "Not Used";
 
     // Guards against a race whose rate is nonzero but vanishingly small
     // (rather than a clean 0.0) - without this, dividing by a near-zero rate
@@ -652,22 +654,32 @@ public abstract class RoomService {
     // files (typically in the 0.5-3.0 range).
     private static final double MINIMUM_RATE_THRESHOLD = 0.00001;
 
-    public static void appendDivergenceLines(GBox tooltipBox, NEED serviceNeed, double baseCapacity) {
+    public static void appendDivergenceLines(GBox box, NEED serviceNeed, double baseCapacity) {
         if (serviceNeed == null) {
             return;
         }
 
         double baseRate = serviceNeed.rate.get(HCLASS_RACE.clP(null, null));
+
+        boolean addedHeader = false;
         for (Race currentRace : RACES.all()) {
             if (currentRace.all(serviceNeed.rate).size() > 0) {
-                double raceRate = currentRace.bvalue(serviceNeed.rate);
-                tooltipBox.NL();
-                tooltipBox.textL(currentRace.info.names);
-                tooltipBox.tab(6);
+                if (!addedHeader){
+                    box.NL();
+                    box.textLL(SPECIES_ESTIMATES);
+                    addedHeader = true;
+                }
+                double raceRate = serviceNeed.rate.get(HCLASS_RACE.clP(currentRace, null));
+                box.NL();
+                box.textL(currentRace.info.names);
+                box.tab(6);
                 if (raceRate <= MINIMUM_RATE_THRESHOLD) {
-                    tooltipBox.text(NOT_USED_LABEL);
+                    box.text(NOT_USED_LABEL);
                 } else {
-                    tooltipBox.add(GFORMAT.i(tooltipBox.text(), (int) (baseCapacity * baseRate / raceRate)));
+                    box.add(GFORMAT.i(box.text(), (int) (baseCapacity * baseRate / raceRate)));
+                    box.text("(");
+                    box.add(GFORMAT.percInc(box.text(), baseRate / raceRate - 1.0,0));
+                    box.text(")");
                 }
             }
         }

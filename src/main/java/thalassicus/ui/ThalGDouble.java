@@ -40,7 +40,7 @@ import util.colors.GCOLOR;
 // ThalGInput adds the one hook (textColor()) needed to actually paint
 // invalid input red; see its own header comment for why binding a color
 // before calling GInput's own render() silently doesn't work.
-public abstract class GDouble extends ThalGInput {
+public abstract class ThalGDouble extends ThalGInput {
 
     // Buffer capacity, in characters. Str reserves one slot (spaceLeft()
     // is chars.length - last - 1, not chars.length - last) - almost
@@ -103,7 +103,7 @@ public abstract class GDouble extends ThalGInput {
     // Two decimal places by default - matches this class's original,
     // pre-decimalPlaces-parameter behavior exactly, so every existing
     // caller (capacity-per-slot cells) needs no changes at all.
-    protected GDouble(double minimumValue, double maximumValue) {
+    protected ThalGDouble(double minimumValue, double maximumValue) {
         this(minimumValue, maximumValue, 2);
     }
 
@@ -111,7 +111,7 @@ public abstract class GDouble extends ThalGInput {
     // hardcoded here - the [1.0, 99999.0] capacity-per-slot range is domain
     // knowledge belonging to the capacity-profile feature, not to this
     // general-purpose input box.
-    protected GDouble(double minimumValue, double maximumValue, int decimalPlaces) {
+    protected ThalGDouble(double minimumValue, double maximumValue, int decimalPlaces) {
         this(minimumValue, maximumValue, decimalPlaces, new DecimalInputSprite(minimumValue, maximumValue, decimalPlaces));
     }
 
@@ -123,7 +123,7 @@ public abstract class GDouble extends ThalGInput {
     // nothing from the outer instance (just the two bounds and
     // decimalPlaces) is what makes this possible without a two-phase,
     // set-the-owner-after-construction workaround.
-    private GDouble(double minimumValue, double maximumValue, int decimalPlaces, DecimalInputSprite inputSprite) {
+    private ThalGDouble(double minimumValue, double maximumValue, int decimalPlaces, DecimalInputSprite inputSprite) {
         super(inputSprite);
         this.minimumValue = minimumValue;
         this.maximumValue = maximumValue;
