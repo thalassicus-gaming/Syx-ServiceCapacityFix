@@ -1,5 +1,5 @@
 // ThalCapacityProfileManager.java
-// Document Version 1.4.0
+// Document Version 1.5.0
 // Creation date: 2026/07/18
 // Creator: Thalassicus
 
@@ -45,19 +45,16 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
     }
 
     private static final CharSequence NAME = "Thal Capacity Profile Manager";
-    private static final CharSequence DESCRIPTION =
-            "Internal utility. Manages saved capacity-planning profiles and which one is active for this save. Not a gameplay-affecting script.";
+    private static final CharSequence DESCRIPTION = "Internal utility. Manages saved capacity-planning profiles and which one is active for this save. Not a gameplay-affecting script.";
 
-    private static final Path PROFILES_DIRECTORY =
-            Path.of(System.getenv("APPDATA"), "songsofsyx", "mods", "Service Estimate Fix", "Profiles");
+    private static final Path PROFILES_DIRECTORY = Path.of(System.getenv("APPDATA"), "songsofsyx", "mods", "Service Estimate Fix", "Profiles");
 
     private static final double MIN_CAPACITY_PER_SLOT = 0.99;
 
     // Debug scaffolding: refreshes a reserved profile once per day from
     // this session's own live data, independent of the real UI panel's own
-    // Live Data selection - a way to inspect capture output directly. Flip
-    // to false to disable without touching call sites.
-    private static final boolean DAILY_REFRESH_ENABLED = true;
+    // Live Data selection - a way to inspect capture output directly.
+    private static final boolean DAILY_REFRESH_ENABLED = false;
     private static final String DEBUG_PROFILE_NAME = "debug_profile";
 
     // The reserved serialized name a shipped default profile must resolve
@@ -200,6 +197,17 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
             }
         }
         return null;
+    }
+
+    // True when displayName would serialize to the same file the shipped
+    // default profile occupies. Exposed as its own method rather than
+    // making DEFAULT_PROFILE_FILE_NAME or sanitizeFileName public, so the
+    // UI can ask the question without re-implementing (and eventually
+    // drifting from) either - the comparison has to go through
+    // sanitizeFileName to be meaningful at all, since "Default Profile",
+    // "default profile", and "default_profile" all serialize identically.
+    public boolean isDefaultProfileName(String displayName) {
+        return sanitizeFileName(displayName).equals(DEFAULT_PROFILE_FILE_NAME);
     }
 
     private void sortLoadedProfiles() {

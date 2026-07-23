@@ -1,5 +1,5 @@
 // ThalCapacityUI.java
-// Document Version 1.20.0
+// Document Version 1.21.0
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
@@ -578,6 +578,68 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         ThalCapacityProfileManager manager = ThalCapacityProfileManager.instance();
         if (manager == null) {
             log.error("attemptSave(): ThalCapacityProfileManager.instance() was null - cannot save.");
+            return;
+        }
+
+        // Warns rather than blocks - saving over the shipped default IS
+        // allowed, it just won't survive the next Workshop update, so the
+        // player gets told before it happens rather than losing work
+        // silently later. Deliberately checked BEFORE the collision check
+        // below: overwriting the default profile is always a collision
+        // too, and this warning is the more specific, more useful of the
+        // two, so it should be the one the player actually sees.
+        //
+        // The Duplicate button is what makes this prompt genuinely
+        // different from every other confirmation in this file - rather
+        // than only offering to proceed or abort, it offers a third path
+        // that resolves the underlying problem outright, leaving the
+        // player on an unsaved copy under a new name that Workshop
+        // updates will never touch.
+        if (manager.isDefaultProfileName(this.scratchProfile.displayName())) {
+            GButt.ButtPanel duplicateButton = new GButt.ButtPanel("Duplicate") {
+                @Override
+                protected void clickA() {
+                    // Abandons this save entirely - onSuccess is never
+                    // run, so whatever transition was waiting on this save
+                    // (if this came via guardDestructiveTransition's own
+                    // Save option) correctly does NOT proceed either. The
+                    // player is left holding an unsaved "Copy of ..."
+                    // profile, exactly as if they'd clicked the Duplicate
+                    // button directly.
+                    ThalCapacityUI.this.transitionToDuplicate();
+                }
+            };
+            GButt.ButtPanel continueSavingButton = new GButt.ButtPanel("Continue Saving") {
+                @Override
+                protected void clickA() {
+                    // Skips straight to persisting, deliberately bypassing
+                    // the collision check below - overwriting the default
+                    // profile is the exact thing the player just
+                    // acknowledged, so re-prompting about that same
+                    // overwrite would be asking the same question twice.
+                    // Passes the existing default profile as
+                    // profileToOverwrite (null when no stored default
+                    // exists yet, e.g. saving a brand-new profile that
+                    // happens to use this name), so the dropdown entry
+                    // sync afterward reuses the right entry.
+                    ThalCapacityProfile existingDefault = manager.findProfileBySerializedName(ThalCapacityUI.this.scratchProfile.displayName());
+                    ThalCapacityProfile profileToOverwrite = existingDefault == ThalCapacityUI.this.selectedStoredProfile ? null : existingDefault;
+                    ThalCapacityUI.this.persistScratchProfile(manager, profileToOverwrite, onSuccess);
+                }
+            };
+            GButt.ButtPanel cancelButton = new GButt.ButtPanel("Cancel") {
+                @Override
+                protected void clickA() {
+                    // No-op: dismisses without saving or duplicating.
+                }
+            };
+            this.confirmationBox.activate(
+                    "Warning: Steam Workshop will replace the Default Profile when it updates the mod. You can duplicate it first to safely create your own version.",
+                    () -> {
+                    },
+                    true,
+                    duplicateButton, continueSavingButton, cancelButton
+            );
             return;
         }
 
