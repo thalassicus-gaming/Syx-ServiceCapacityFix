@@ -1,5 +1,5 @@
 // ThalGDropDown.java
-// Document Version 1.1.0
+// Document Version 1.3.0
 // Creation date: 2026/07/21
 // Creator: Thalassicus
 
@@ -17,10 +17,8 @@ import snake2d.util.gui.GuiSection;
 import snake2d.util.gui.clickable.CLICKABLE;
 import snake2d.util.gui.renderable.RENDEROBJ;
 import snake2d.util.sets.ArrayListResize;
-import snake2d.util.sprite.SPRITE;
 import util.data.GETTER;
 import util.gui.misc.GBox;
-import util.gui.misc.GText;
 import util.gui.panel.GPanel;
 import util.gui.table.GTableBuilder;
 import view.interrupter.InterManager;
@@ -45,9 +43,23 @@ import view.main.VIEW;
 // understood copy of a ~200-line class used in exactly one place in the
 // base game to begin with.
 public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs implements CLICKABLE {
-    private final SPRITE title;
-    private final int mX = 4;
-    private final int mY = 1;
+
+    // 5px above and below the selected entry's own text - previously the
+    // box's own height was font.height() + 2 (an unexplained, minimal
+    // vanilla constant), leaving text flush against the top/bottom edges.
+    private static final int VERTICAL_MARGIN = 5;
+    // Left edge of the selected entry's own rendered text - matches
+    // ProfileDropdownEntry's own "+4" padding convention, so text lines up
+    // the same way whether it's being measured for the popup or drawn
+    // here in the closed box.
+    private static final int HORIZONTAL_TEXT_MARGIN = 4;
+    // Reserved on the right regardless of hover state, so the selected
+    // entry's own text never visually collides with the arrow icon that
+    // only appears while hovered - reserving it unconditionally avoids the
+    // text's own available width (and therefore its truncation point)
+    // silently changing the instant the mouse moves over the box.
+    private static final int ARROW_ICON_RESERVED_WIDTH = 24;
+
     private E selected;
     private GuiSection expansion = new GuiSection();
     private final ThalGDropDown<E>.Inter inter;
@@ -75,37 +87,25 @@ public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs i
         return this;
     }
 
-    public ThalGDropDown(SPRITE title) {
-        this.title = title;
-        this.body.setHeight(UI.FONT().S.height() + 2);
+    // No title/label text shown in the closed box anymore - vanilla
+    // GDropDown's (and this fork's own, until now) design always showed a
+    // fixed label ("Profile") to the left of the selected entry's own
+    // name, with a separator line between them. Removed entirely per the
+    // design change: the box now shows ONLY the selected entry's own name,
+    // using its full available width.
+    //
+    // width is now a genuinely FIXED constraint on this.body, set once
+    // here and never touched again - unlike this class's own earlier
+    // init(), which recalculated this.body's width from whatever the
+    // widest entry happened to measure. That's exactly what caused the
+    // box to visibly grow out from underneath ThalCapacityUI's own
+    // neighboring buttons whenever a long profile name got added; a
+    // fixed width plus ProfileDropdownEntry's own truncation (see its
+    // render()'s own comment) is what actually fixes that, rather than
+    // just papering over the symptom with a wider box.
+    public ThalGDropDown(int width) {
+        this.body.setDim(width, UI.FONT().S.height() + 2 * VERTICAL_MARGIN);
         this.inter = new ThalGDropDown.Inter();
-    }
-
-    // Explicit (SPRITE) cast is required, not stylistic - GText (via Text)
-    // implements both SPRITE and CharSequence, so without it this call
-    // matches two ThalGDropDown constructors at once (this one included)
-    // and fails to compile as "reference ... is ambiguous". Vanilla
-    // GDropDown's own decompiled source had this identical line with no
-    // visible cast and compiled fine there - decompilation doesn't always
-    // preserve a disambiguating cast that was present in the original,
-    // pre-compiled source; copying the clean-looking decompiled text
-    // brought the ambiguity back to the surface here.
-    public ThalGDropDown(CharSequence title) {
-        this((SPRITE) new GText(UI.FONT().S, title).lablify());
-    }
-
-    public ThalGDropDown(CharSequence title, int width) {
-        this(sp(title, width));
-    }
-
-    private static SPRITE sp(CharSequence title, int width) {
-        final GText t = new GText(UI.FONT().S, title).lablify();
-        return new SPRITE.Imp(width, t.height() + 4) {
-            @Override
-            public void render(SPRITE_RENDERER r, int X1, int X2, int Y1, int Y2) {
-                t.render(r, X1 + 2, Y1 + 2);
-            }
-        };
     }
 
     @Override
@@ -119,23 +119,30 @@ public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs i
             COLOR.WHITE20.render(r, this.body.x1() + 1, this.body.x2() - 1, this.body.y1() + 1, this.body.y2() - 1);
         }
 
-        COLOR.WHITE05.render(r, this.body.x1() + this.title.width() + 8, this.body.x1() + this.title.width() + 8 + 1, this.body.y1(), this.body.y2());
-        if (!isActive) {
-            COLOR.WHITE50.bind();
-        } else if (isHovered) {
+        if (isActive && isHovered) {
             SPRITES.icons().s.arrowDown.render(r, this.body.x2() - 16 - 4, this.body.y1() + (this.body.height() - 16) / 2);
-            COLOR.WHITE150.bind();
         }
 
-        this.title.render(r, this.body.x1() + 4, this.body.y1() + (this.body.height() - this.title.height()) / 2);
-        COLOR.unbind();
         if (this.selected != null) {
             int x1 = this.selected.body().x1();
             int y1 = this.selected.body().y1();
+            int x2 = this.selected.body().x2();
             this.selected.body().centerY(this.body);
-            this.selected.body().moveX1(this.body.x1() + this.title.width() + 12);
+            this.selected.body().moveX1(this.body.x1() + HORIZONTAL_TEXT_MARGIN);
+            // RECTANGLEE has no width-setter of its own - every mutator it
+            // declares moves a position/edge, never a dimension directly
+            // (moveX1/moveX2/moveC/centerX, etc.), and only the separate,
+            // concrete DIMENSION.Imp class happens to expose widthSet() -
+            // not something reachable through this interface type without
+            // an unconfirmed cast. Achieves the same effect through
+            // moveX2() instead, which IS on RECTANGLEE: since width is
+            // just x2() - x1(), moving the right edge to this.body's own
+            // x2() minus the reserved arrow space constrains width
+            // identically, using only the confirmed public interface.
+            this.selected.body().moveX2(this.body.x2() - ARROW_ICON_RESERVED_WIDTH);
             this.selected.render(r, ds);
             this.selected.body().moveX1Y1(x1, y1);
+            this.selected.body().moveX2(x2);
         }
     }
 
@@ -198,6 +205,18 @@ public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs i
         return this;
     }
 
+    // 0 by default, meaning "no floor - purely determined by the widest
+    // current entry" (vanilla GDropDown's own, only, behavior). A caller
+    // wanting the popup to never look cramped regardless of how short its
+    // entries' own labels happen to be can set a floor via
+    // minExpansionWidth() below.
+    private int minExpansionWidth = 0;
+
+    public ThalGDropDown<E> minExpansionWidth(int width) {
+        this.minExpansionWidth = width;
+        return this;
+    }
+
     // Batches every add() call before rebuilding the popup once, rather
     // than after each individual add() - callers doing a bulk initial
     // population (ThalCapacityUI's own buildProfileDropdown()) call this
@@ -206,7 +225,7 @@ public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs i
     // the right default there instead.
     public ThalGDropDown<E> init() {
         this.expansion.clear();
-        int w = 0;
+        int w = this.minExpansionWidth;
         int h = 0;
 
         for (E e : this.es) {
@@ -219,7 +238,9 @@ public class ThalGDropDown<E extends CLICKABLE> extends CLICKABLE.ClickableAbs i
             }
         }
 
-        this.body.setWidth(this.title.width() + 16 + w);
+        // this.body's own width is fixed at construction time now (see
+        // the constructor's own comment) - w/h below still drive the
+        // POPUP's own column sizing only, no longer this.body's.
         this.dummy.body.setWidth(w).setHeight(h);
         // Deliberately NOT calling this.es.trim() here, unlike vanilla
         // GDropDown's own init(). trim() shrinks the backing array to

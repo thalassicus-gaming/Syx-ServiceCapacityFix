@@ -44,6 +44,7 @@ public class GSlidableViewportVertical extends GuiSection {
     // measured against the real end-button sprite heights - expect to
     // need visual tuning, same as the layout guesses in ThalCapacityUI.
     private static final int SLIDER_END_BUTTON_HEIGHT_ALLOWANCE = 32;
+    public static final int VERTICAL_CONTENT_MARGIN = 10;
 
     // How many pixels one mouse wheel notch scrolls. Tree uses
     // Node.HEIGHT() for this - a domain-specific "one notch = one node"
@@ -117,7 +118,7 @@ public class GSlidableViewportVertical extends GuiSection {
     // trick themselves - this way it's handled the same way GuiSection
     // already handles it.
     public void contentAdd(SPRITE content) {
-        this.contentSection.addDown(0, content);
+        this.contentSection.addDown(VERTICAL_CONTENT_MARGIN, content);
         this.recalculateOverflow();
     }
 

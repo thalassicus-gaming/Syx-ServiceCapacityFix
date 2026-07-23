@@ -1,6 +1,5 @@
-
 // ThalCapacityUI.java
-// Document Version 1.10.0
+// Document Version 1.20.0
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
@@ -23,7 +22,6 @@ import script.SCRIPT;
 import snake2d.MButt;
 import snake2d.Renderer;
 import snake2d.SPRITE_RENDERER;
-import snake2d.util.color.COLOR;
 import snake2d.util.datatypes.COORDINATE;
 import snake2d.util.datatypes.DIR;
 import snake2d.util.file.FileGetter;
@@ -35,11 +33,12 @@ import snake2d.util.sprite.text.StringInputSprite;
 import thalassicus.ui.GLabeledValue;
 import thalassicus.ui.GSlidableViewportVertical;
 import thalassicus.ui.ThalGDropDown;
+import thalassicus.ui.ThalGInput;
+import thalassicus.ui.ThalIPromtButtons;
 import thalassicus.util.ThalReflectionUtil;
 import thalassicus.util.ThalsLogger;
 import util.gui.misc.GBox;
 import util.gui.misc.GButt;
-import util.gui.misc.GInput;
 import util.gui.misc.GText;
 import util.gui.panel.GPanel;
 import view.interrupter.InterManager;
@@ -50,6 +49,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
             ThalsLogger.INFO,
             System.getenv("APPDATA") + "\\songsofsyx\\logs\\ThalCapacityUI.log"
     );
+    public static final double FONT_CHARACTER_WIDTH = (0.75 * UI.FONT().S.maxCWidth);
     private static ThalCapacityUI instance;
     public static ThalCapacityUI instance() {
         return instance;
@@ -60,25 +60,54 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     private static final int LABEL_COLUMN_WIDTH = 180;
     private static final int CELLS_PER_ROW = 4;
     private static final int CELL_HORIZONTAL_MARGIN = 16;
-    private static final int ROW_MARGIN = 8;
+    private static final int HORIZONTAL_INTER_PADDING = 8;
     private static final int SECTION_MARGIN = 16;
-    private static final double PANEL_WIDTH_FRACTION = 0.85;
-    private static final double PANEL_HEIGHT_FRACTION = 0.85;
+    public static final int DROPDOWN_WIDTH = 320;
+    public static final int DROPDOWN_POPUP_WIDTH = 320;
+    private static final double PANEL_WIDTH_FRACTION = 0.6;
+    private static final double PANEL_HEIGHT_FRACTION = 0.6;
     private static final int VIEWPORT_WHEEL_SCROLL_STEP = 40;
+    public static final int PROFILE_NAME_MAX_CHARACTERS = 30;
     private static final double CAPACITY_MINIMUM = 1.0;
     private static final double CAPACITY_MAXIMUM = 99999.0;
     private static final double POPULATION_MINIMUM = 0.0;
     private static final double POPULATION_MAXIMUM = 999999.0;
-    // Shared by the two dropdown sentinels' own labels, transitionToLiveData()'s
-    // metadata, and attemptSave()'s reserved-name guard below - one
-    // definition each, rather than repeated literals that could drift out
-    // of sync with what the guard actually checks against.
-    private static final String RESERVED_NAME_NEW_PROFILE = "New Profile";
-    private static final String RESERVED_NAME_LIVE_DATA = "Live Data";
+    private static final int CAPACITY_DECIMAL_PLACES = 2;
+    public static final int DESCRIPTION_MIN_CHARACTERS = 10;
+    // Species/HTYPE population counts are genuinely whole numbers - 0
+    // decimal places makes their own GDouble cells reject a typed decimal
+    // point outright, not just round one away after the fact.
+    private static final int POPULATION_DECIMAL_PLACES = 0;
+    // Shared by the two dropdown sentinels' own labels and attemptSave()'s
+    // reserved-name guard below - one definition each, rather than
+    // repeated literals that could drift out of sync with what the guard
+    // actually checks against. Chevrons are a deliberate visual marker
+    // (per the design spec) that these are sentinels, not real profiles -
+    // a plain "New Profile"/"Live Data" without them is a perfectly valid,
+    // ordinary name a player can still save under; only the exact
+    // chevron-wrapped strings are reserved.
+    private static final String RESERVED_NAME_NEW_PROFILE = "<New Profile>";
+    private static final String RESERVED_NAME_LIVE_DATA = "<Live Data>";
     private GPanel mainPanel;
     private final GuiSection topSection = new GuiSection();
     private GSlidableViewportVertical contentViewport;
     private Inter inter;
+    // A single, persistent instance reused across every activation, the
+    // same way VIEW.inters().yesNo/.fullScreen are also long-lived shared
+    // fields rather than recreated per-use - not "define, use, forget"
+    // like a fire-and-forget popup, since Interrupter-family objects are
+    // meant to be constructed once and shown repeatedly. Assigned in
+    // buildUI(), not eagerly, since it needs VIEW.inters().manager.
+    private ThalIPromtButtons confirmationBox;
+    // Refreshed every render via refreshActiveProfileLabel() - not a
+    // FixedWidthLabel wrapper the way the table label column needed
+    // (that solved a DIFFERENT problem: needing a STABLE reserved width so
+    // sibling grid cells wouldn't shift as content changed). This is the
+    // LAST element in its row with nothing positioned after it depending
+    // on a stable width, so letting it naturally resize to fit its own
+    // changing "Active Profile: X" text is the correct, simpler choice
+    // here, not the same bug in a new location.
+    private GText activeProfileLabel;
     private ThalGDropDown<ProfileDropdownEntry> profileDropdown;
     // Built once, referenced directly wherever code needs to force the
     // dropdown's visual selection to one of these specific sentinels
@@ -97,8 +126,8 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // identity of the entry itself - this map is what actually answers
     // "which entry represents THIS profile" in the first place.
     private final Map<ThalCapacityProfile, ProfileDropdownEntry> dropdownEntriesByProfile = new HashMap<>();
-    private GInput displayNameField;
-    private GInput descriptionField;
+    private ThalGInput displayNameField;
+    private ThalGInput descriptionField;
     private final List<GLabeledValue> allLabeledValues = new ArrayList<>();
     private Map<String, GLabeledValue> capacityCellsByKey;
     private Map<String, GLabeledValue> speciesCellsByKey;
@@ -116,6 +145,10 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     private ProfileDropdownEntry lastKnownSelection;
     private boolean isDiscardPromptPending = false;
     private boolean isContentBuilt = false;
+    // Guards syncStoredProfilesIntoDropdown() below - runs exactly once,
+    // on this SCRIPT_INSTANCE's own first update() call, not during
+    // createInstance()/buildUI(). See that method's own comment for why.
+    private boolean hasSyncedStoredProfiles = false;
     // Deliberately empty. ThalCapacityUI serves BOTH roles SCRIPT
     // requires: a pure descriptor (name()/desc()/isSelectable(), needed by
     // the main menu's own script-discovery/enumeration UI) and the real,
@@ -146,19 +179,21 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
 
         this.mainPanel = new GPanel();
         this.inter = new Inter();
+        this.confirmationBox = new ThalIPromtButtons(VIEW.inters().manager);
+        this.activeProfileLabel = new GText(UI.FONT().S, "").normalify();
         this.newProfileEntry = ProfileDropdownEntry.sentinel(RESERVED_NAME_NEW_PROFILE, ProfileDropdownEntry.Kind.NEW_PROFILE);
         this.liveDataEntry = ProfileDropdownEntry.sentinel(RESERVED_NAME_LIVE_DATA, ProfileDropdownEntry.Kind.LIVE_DATA);
 
-        this.profileDropdown = this.buildProfileDropdown();
-        this.displayNameField = this.buildTextField("Display Name", 40, this.scratchProfile::displayNameSet);
-        int descriptionAvailableWidth = panelWidth - this.displayNameField.body().width() - ROW_MARGIN - SECTION_MARGIN;
-        int descriptionCapacity = Math.max(10, (descriptionAvailableWidth - 12) / UI.FONT().S.maxCWidth);
+        this.displayNameField = this.buildTextField("Display Name", PROFILE_NAME_MAX_CHARACTERS, this.scratchProfile::displayNameSet);
+        this.profileDropdown = this.buildProfileDropdown(this.displayNameField.body().width());
+        int descriptionAvailableWidth = panelWidth - this.displayNameField.body().width() - HORIZONTAL_INTER_PADDING;
+        int descriptionCapacity = Math.max(DESCRIPTION_MIN_CHARACTERS, (descriptionAvailableWidth - ThalGInput.PADDING_WIDTH) / ThalGInput.perCharacterAdvance(UI.FONT().S));
         this.descriptionField = this.buildTextField("Description", descriptionCapacity, this.scratchProfile::descriptionSet);
         this.buildTopSection();
         int viewportY = this.topSection.body().height() + SECTION_MARGIN;
         this.contentViewport = new GSlidableViewportVertical(panelWidth, panelHeight - viewportY, VIEWPORT_WHEEL_SCROLL_STEP);
         this.mainPanel.setBig();
-        this.mainPanel.setTitle("Capacity Profiles");
+        this.mainPanel.setTitle("Capacity Profile Editor");
         this.mainPanel.setCloseAction(this::closePanel);
         this.mainPanel.setDim(panelWidth, panelHeight);
         this.mainPanel.body().centerX(C.DIM());
@@ -197,13 +232,15 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // is checked AND owned here, so callers never need to remember that
     // bookkeeping themselves.
     //
-    // Uses VIEW.inters().fullScreen (IPromtScreen) rather than
-    // VIEW.inters().yesNo (IPromtYesNO) specifically because it accepts
-    // arbitrary labeled GButt's - "Save"/"Don't Save"/"Cancel" as real
-    // button text, not icons standing in for a meaning the player has to
-    // infer. IPromtScreen's own deactivateAction fires on every exit path
-    // (any button, or ESC/ENTER) before that button's own click() runs -
-    // confirmed from its own source - which is why the pending-flag reset
+    // Uses this.confirmationBox (our own ThalIPromtButtons, a fork of
+    // vanilla IPromtYesNO) rather than VIEW.inters().yesNo (IPromtYesNO
+    // itself) specifically because it accepts arbitrary labeled GButt's -
+    // "Save"/"Don't Save"/"Cancel" as real button text, not icons standing
+    // in for a meaning the player has to infer - while staying a normal,
+    // modestly-sized box rather than IPromtScreen's deliberately
+    // full-screen treatment. confirmationBox's own onDismissed fires on
+    // every exit path (any button, or ESC/right-click) before that
+    // button's own click() runs - which is why the pending-flag reset
     // lives there rather than duplicated in each of the three buttons.
     // 1-arg overload for callers with no cancel-specific side effect to run
     // (closePanel() - canceling just means staying on the panel, nothing to
@@ -244,10 +281,10 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
             }
         };
 
-        VIEW.inters().fullScreen.activate(
+        this.confirmationBox.activate(
                 "You have unsaved changes.",
-                COLOR.WHITE100,
                 () -> ThalCapacityUI.this.isDiscardPromptPending = false,
+                true,
                 saveButton, dontSaveButton, cancelButton
         );
     }
@@ -268,12 +305,21 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         this.syncLastKnownSelection();
     }
 
+    // isDirty is explicitly false here, not true - matches the convention
+    // most document editors use: a genuinely blank "new" document has
+    // nothing to lose yet, so switching away or closing shouldn't prompt
+    // a save-confirmation until the player has actually typed something.
+    // Explicit false rather than simply omitting the assignment - this
+    // transition can run right after "Don't Save" discarded a PREVIOUS
+    // dirty edit, and without resetting it here that stale true would
+    // otherwise linger, incorrectly flagging this brand-new blank profile
+    // as already having something to lose.
     private void transitionToNew() {
         this.selectedStoredProfile = null;
         this.scratchProfile.clear();
         this.scratchProfile.displayNameSet("");
         this.scratchProfile.descriptionSet("");
-        this.isDirty = true;
+        this.isDirty = false;
         this.refreshEditorFieldsFromScratchProfile();
         // Forces the dropdown's own visual selection to <New Profile> -
         // a no-op when this runs via the dropdown itself (already
@@ -286,15 +332,14 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
 
     // populateFromLiveData() already clears scratchProfile's three maps
     // internally before capturing - it does not touch displayName/
-    // description, so those are set explicitly here afterward, the same
-    // way transitionToNew() does. Finally wires real ThalCapacityProfileManager
-    // data into this panel - the first point this class talks to the
-    // Manager at all.
+    // description, and neither does this method. Live Data isn't a
+    // profile itself, so it doesn't make sense for selecting it to touch
+    // Name or Description at all - only the value cells refresh; whatever
+    // the player had in those two fields (blank, a draft name, whatever
+    // they were editing before) stays exactly as it was.
     private void transitionToLiveData() {
         this.selectedStoredProfile = null;
         ThalCapacityProfileManager.instance().populateFromLiveData(this.scratchProfile);
-        this.scratchProfile.displayNameSet(RESERVED_NAME_LIVE_DATA);
-        this.scratchProfile.descriptionSet("");
         this.isDirty = true;
         this.refreshEditorFieldsFromScratchProfile();
         // Collapses the dropdown's own visual selection back to
@@ -353,12 +398,24 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // clickable in the first place.
     private void deleteSelectedProfile() {
         ThalCapacityProfile profileToDelete = this.selectedStoredProfile;
-        VIEW.inters().yesNo.activate(
+        GButt.ButtPanel deleteButton = new GButt.ButtPanel("Delete") {
+            @Override
+            protected void clickA() {
+                ThalCapacityUI.this.performDelete(profileToDelete);
+            }
+        };
+        GButt.ButtPanel cancelButton = new GButt.ButtPanel("Cancel") {
+            @Override
+            protected void clickA() {
+                // No-op: dismisses without deleting.
+            }
+        };
+        this.confirmationBox.activate(
                 "Delete profile \"" + profileToDelete.displayName() + "\"? This cannot be undone.",
-                () -> this.performDelete(profileToDelete),
                 () -> {
                 },
-                true
+                true,
+                deleteButton, cancelButton
         );
     }
 
@@ -415,12 +472,24 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
             return;
         }
 
-        VIEW.inters().yesNo.activate(
+        GButt.ButtPanel saveButton = new GButt.ButtPanel("Save") {
+            @Override
+            protected void clickA() {
+                ThalCapacityUI.this.attemptSave(ThalCapacityUI.this::performActivate);
+            }
+        };
+        GButt.ButtPanel cancelButton = new GButt.ButtPanel("Cancel") {
+            @Override
+            protected void clickA() {
+                // No-op: dismisses without activating.
+            }
+        };
+        this.confirmationBox.activate(
                 "Save this profile and make it active?",
-                () -> this.attemptSave(this::performActivate),
                 () -> {
                 },
-                true
+                true,
+                saveButton, cancelButton
         );
     }
 
@@ -447,12 +516,46 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // already used throughout this file for every popup-driven flow
     // (guardDestructiveTransition's own proceedAction/cancelAction).
     //
-    // The reserved-name check runs first and unconditionally - it's a
-    // pure data-validation concern that doesn't need the Manager at all,
+    // The cell-validity check runs first, even before the reserved-name
+    // check - both are pure UI-side validation needing no Manager at all,
+    // but an invalid cell is arguably the more fundamental problem of the
+    // two. Genuinely necessary, not redundant with GDouble's own keystroke/
+    // range gating: that gating stops an INVALID cell's bad value from
+    // ever being committed into scratchProfile in the first place
+    // (commitIfChanged() only fires on VALID), but does nothing to stop
+    // Save itself from proceeding - without this check, Save would
+    // silently persist whatever stale value scratchProfile already held
+    // for that key, while the player's current on-screen (red, invalid)
+    // number just vanishes with no warning at all.
+    //
+    // The reserved-name check runs second, right after cell-validity - it's
+    // a pure data-validation concern that doesn't need the Manager at all,
     // and it correctly blocks both a brand-new profile AND a rename of an
     // existing one landing on either sentinel name, since it only looks
     // at scratchProfile's own current displayName().
     private void attemptSave(Runnable onSuccess) {
+        String invalidLabels = this.invalidCellLabels();
+        if (!invalidLabels.isEmpty()) {
+            GButt.ButtPanel okayButton = new GButt.ButtPanel("Okay") {
+                @Override
+                protected void clickA() {
+                    // No-op: this message has nothing pending to proceed
+                    // with, just dismisses. "Okay" rather than "Cancel"
+                    // (unlike every other confirmationBox message in this
+                    // file) - there's nothing being cancelled here, just a
+                    // plain error being acknowledged.
+                }
+            };
+            this.confirmationBox.activate(
+                    "Unable to save because of invalid data: " + invalidLabels + ". Please enter valid data and try again.",
+                    () -> {
+                    },
+                    true,
+                    okayButton
+            );
+            return;
+        }
+
         if (this.isReservedName(this.scratchProfile.displayName())) {
             GButt.ButtPanel cancelButton = new GButt.ButtPanel("Cancel") {
                 @Override
@@ -461,11 +564,11 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                     // with, just dismisses.
                 }
             };
-            VIEW.inters().fullScreen.activate(
-                    "Please choose a name other than " + RESERVED_NAME_LIVE_DATA + " or " + RESERVED_NAME_NEW_PROFILE + ".",
-                    COLOR.WHITE100,
+            this.confirmationBox.activate(
+                    "Please choose a name other than " + RESERVED_NAME_LIVE_DATA + " or " + RESERVED_NAME_NEW_PROFILE + ", and make sure it isn't blank.",
                     () -> {
                     },
+                    true,
                     cancelButton
             );
             return;
@@ -481,12 +584,24 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         boolean isRealCollision = collidingProfile != null && collidingProfile != this.selectedStoredProfile;
 
         if (isRealCollision) {
-            VIEW.inters().yesNo.activate(
+            GButt.ButtPanel overwriteButton = new GButt.ButtPanel("Overwrite") {
+                @Override
+                protected void clickA() {
+                    ThalCapacityUI.this.persistScratchProfile(manager, collidingProfile, onSuccess);
+                }
+            };
+            GButt.ButtPanel cancelButton = new GButt.ButtPanel("Cancel") {
+                @Override
+                protected void clickA() {
+                    // No-op: dismisses without overwriting.
+                }
+            };
+            this.confirmationBox.activate(
                     "A profile named \"" + this.scratchProfile.displayName() + "\" already exists. Overwrite it?",
-                    () -> this.persistScratchProfile(manager, collidingProfile, onSuccess),
                     () -> {
                     },
-                    true
+                    true,
+                    overwriteButton, cancelButton
             );
         } else {
             this.persistScratchProfile(manager, null, onSuccess);
@@ -497,10 +612,12 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // match against the sentinel labels - closes the easy loophole of
     // typing "live data" or "New Profile " (trailing space) to sneak past
     // a literal comparison, which would defeat the whole point of this
-    // guard.
+    // guard. Blank (after trimming) is treated as reserved too - an empty
+    // display name would otherwise sanitize to a filename that's just an
+    // extension, with no actual name in it at all.
     private boolean isReservedName(String displayName) {
         String trimmed = displayName.trim();
-        return trimmed.equalsIgnoreCase(RESERVED_NAME_NEW_PROFILE) || trimmed.equalsIgnoreCase(RESERVED_NAME_LIVE_DATA);
+        return trimmed.isEmpty() || trimmed.equalsIgnoreCase(RESERVED_NAME_NEW_PROFILE) || trimmed.equalsIgnoreCase(RESERVED_NAME_LIVE_DATA);
     }
 
     // profileToOverwrite is the OTHER, different stored profile the player
@@ -571,13 +688,25 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     // starting state is the more sensible default than landing on Live
     // Data or an arbitrary stored profile.
     //
-    // TODO: assumes ThalCapacityProfileManager.instance() is already
-    // non-null by the time ThalCapacityUI's own constructor runs. No
-    // confirmed evidence either way about relative SCRIPT creation order
-    // between different SCRIPT implementors in this framework. Guarded
-    // defensively (skips real profiles, keeps both sentinels) rather than
-    // risking a NullPointerException if the assumption is wrong.
-    private ThalGDropDown<ProfileDropdownEntry> buildProfileDropdown() {
+    // CONFIRMED (against ScriptLoad.java/ScriptEngine.java's own source):
+    // by the time createInstance() ever runs - and so by the time this
+    // method ever runs, since buildUI() is only called from there -
+    // GAME.java's own constructor has already run this.view = new
+    // VIEW(this) before this.script.init(null) (which is what triggers
+    // every SCRIPT's own createInstance()). VIEW/UI/C are guaranteed to
+    // exist here; that half of the original crash's uncertainty is fully
+    // resolved.
+    //
+    // Only the two sentinels are added here - real stored profiles are
+    // deliberately NOT populated in this method anymore. See
+    // syncStoredProfilesIntoDropdown()'s own comment for why: this method
+    // runs DURING createInstance(), and ThalCapacityProfileManager's own
+    // createInstance() is not guaranteed to have already run at that exact
+    // point - confirmed the hard way, pre-existing profiles silently never
+    // appearing in the dropdown after restarting the game (this class's
+    // own createInstance() happened to run first that time, so
+    // ThalCapacityProfileManager.instance() was still null here).
+    private ThalGDropDown<ProfileDropdownEntry> buildProfileDropdown(int dropdownWidth) {
         // This panel shows itself via VIEW.inters().manager (a global
         // overlay, not tied to whichever view happens to be current) -
         // the dropdown's own popup has to be told to use that SAME
@@ -587,24 +716,26 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         // own overlay context. Without this call, the popup silently
         // exists but never renders or receives clicks - confirmed the hard
         // way the first time this was tested in-game.
-        ThalGDropDown<ProfileDropdownEntry> dropdown = new ThalGDropDown<ProfileDropdownEntry>("Profile", 160)
-                .expansionManager(VIEW.inters().manager);
+        // 160 was previously just the "Profile" title portion's own width
+        // (a separate concept from the box's overall width, now removed
+        // entirely) - it becomes the WHOLE box's fixed width here instead.
+        // Kept as a starting guess rather than picked freshly, but expect
+        // to retune visually now that the box shows only the selected
+        // entry's own name rather than a title plus a name.
+        ThalGDropDown<ProfileDropdownEntry> dropdown = new ThalGDropDown<ProfileDropdownEntry>(dropdownWidth)
+                .expansionManager(VIEW.inters().manager)
+                // Popup's own minimum column width - kept independent of
+                // the closed box's own fixed width above, since the popup
+                // list and the closed box no longer share a single "w"
+                // calculation the way they used to (see ThalGDropDown's
+                // own comments on this decoupling).
+                .minExpansionWidth(dropdownWidth);
         dropdown.add(this.newProfileEntry);
         dropdown.add(this.liveDataEntry);
-
-        ThalCapacityProfileManager manager = ThalCapacityProfileManager.instance();
-        if (manager != null) {
-            for (ThalCapacityProfile profile : manager.loadedProfiles()) {
-                ProfileDropdownEntry entry = ProfileDropdownEntry.forStoredProfile(profile);
-                dropdown.add(entry);
-                this.dropdownEntriesByProfile.put(profile, entry);
-            }
-        }
-
         dropdown.init();
         return dropdown;
     }
-    private GInput buildTextField(CharSequence placeholderText, int bufferCapacity, Consumer<String> committer) {
+    private ThalGInput buildTextField(CharSequence placeholderText, int bufferCapacity, Consumer<String> committer) {
         StringInputSprite sprite = new StringInputSprite(bufferCapacity, UI.FONT().S) {
             @Override
             protected void change() {
@@ -612,7 +743,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 ThalCapacityUI.this.isDirty = true;
             }
         }.placeHolder(placeholderText);
-        return new GInput(sprite);
+        return new ThalGInput(sprite);
     }
     private GButt.ButtPanel buildStubButton(CharSequence label) {
         return new GButt.ButtPanel(label) {
@@ -687,7 +818,23 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
             }
             @Override
             protected void renAction() {
-                this.activeSet(ThalCapacityUI.this.selectedStoredProfile != null);
+                // Disabled both when nothing's selected AND when the
+                // currently-viewed profile already IS the active one -
+                // re-activating it would be a meaningless no-op click.
+                // Reference equality (==), not a name comparison, matches
+                // the same identity-based convention already used
+                // throughout this file (profileToOverwrite != previousSelectedProfile,
+                // etc.) - and it's reliable here specifically because
+                // performActivate() always calls activeProfileSet() with
+                // this exact selectedStoredProfile reference, and
+                // ThalCapacityProfileManager.storeProfile() already
+                // re-points activeProfile to the fresh object whenever the
+                // profile being saved happens to be the active one - so
+                // this stays correctly disabled even right after editing
+                // and saving the already-active profile.
+                ThalCapacityProfileManager manager = ThalCapacityProfileManager.instance();
+                boolean isViewingActiveProfile = manager != null && ThalCapacityUI.this.selectedStoredProfile == manager.activeProfile();
+                this.activeSet(ThalCapacityUI.this.selectedStoredProfile != null && !isViewingActiveProfile);
             }
         };
     }
@@ -701,17 +848,18 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     private void buildTopSection() {
         GuiSection managementRow = new GuiSection();
         managementRow.addRightC(0, this.profileDropdown);
-        managementRow.addRightC(ROW_MARGIN, this.buildNewButton());
-        managementRow.addRightC(ROW_MARGIN, this.buildDuplicateButton());
-        managementRow.addRightC(ROW_MARGIN, this.buildSaveButton());
-        managementRow.addRightC(ROW_MARGIN, this.buildStubButton("Merge"));
-        managementRow.addRightC(ROW_MARGIN, this.buildDeleteButton());
-        managementRow.addRightC(ROW_MARGIN, this.buildActivateButton());
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildNewButton());
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildDuplicateButton());
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildSaveButton());
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildStubButton("Merge"));
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildDeleteButton());
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.buildActivateButton());
+        managementRow.addRightC(HORIZONTAL_INTER_PADDING, this.activeProfileLabel);
         GuiSection metadataRow = new GuiSection();
         metadataRow.addRightC(0, this.displayNameField);
-        metadataRow.addRightC(ROW_MARGIN, this.descriptionField);
+        metadataRow.addRightC(HORIZONTAL_INTER_PADDING, this.descriptionField);
         this.topSection.add(managementRow);
-        this.topSection.addDown(ROW_MARGIN, metadataRow);
+        this.topSection.addDown(HORIZONTAL_INTER_PADDING, metadataRow);
     }
     private GText sectionHeader(CharSequence title) {
         return new GText(UI.FONT().M, title).lablifySub();
@@ -735,7 +883,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         // matches the three-tier live/profile/hypothetical naming already
         // established elsewhere in this mod's own RoomService extensions.
         // First thing to check if this doesn't compile.
-        this.capacityCellsByKey = this.buildRows(ThalRoomServiceRegistry.roomServicesSorted(), CAPACITY_MINIMUM, CAPACITY_MAXIMUM,
+        this.capacityCellsByKey = this.buildRows(ThalRoomServiceRegistry.roomServicesSorted(), CAPACITY_MINIMUM, CAPACITY_MAXIMUM, CAPACITY_DECIMAL_PLACES,
                 service -> service.room().key,
                 service -> service.room().info.name,
                 service -> service.hypotheticalCapacityPerSlot(),
@@ -744,14 +892,14 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         this.contentViewport.contentAdd(this.sectionHeader("Species Population"));
         // Flat 0.0 - a settlement starts with no population at all; there
         // is no dense formula to fall back to the way capacity has one.
-        this.speciesCellsByKey = this.buildRows(RACES.all(), POPULATION_MINIMUM, POPULATION_MAXIMUM,
+        this.speciesCellsByKey = this.buildRows(RACES.all(), POPULATION_MINIMUM, POPULATION_MAXIMUM, POPULATION_DECIMAL_PLACES,
                 race -> race.key,
                 race -> race.info.names,
                 race -> 0.0,
                 this.scratchProfile::speciesPopulationSet,
                 this.scratchProfile::speciesPopulationRemove);
         this.contentViewport.contentAdd(this.sectionHeader("HTYPE Population"));
-        this.htypeCellsByKey = this.buildRows(HTYPES.ALL(), POPULATION_MINIMUM, POPULATION_MAXIMUM,
+        this.htypeCellsByKey = this.buildRows(HTYPES.ALL(), POPULATION_MINIMUM, POPULATION_MAXIMUM, POPULATION_DECIMAL_PLACES,
                 hType -> hType.key,
                 hType -> hType.name,
                 hType -> 0.0,
@@ -759,7 +907,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 this.scratchProfile::htypePopulationRemove);
         this.isContentBuilt = true;
     }
-    private <T> Map<String, GLabeledValue> buildRows(Iterable<T> sourceItems, double minimumValue, double maximumValue,
+    private <T> Map<String, GLabeledValue> buildRows(Iterable<T> sourceItems, double minimumValue, double maximumValue, int decimalPlaces,
                                                      Function<T, String> keyExtractor,
                                                      Function<T, CharSequence> labelExtractor,
                                                      ToDoubleFunction<T> defaultValueExtractor,
@@ -784,6 +932,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
                 GLabeledValue cell = new GLabeledValue(
                         minimumValue,
                         maximumValue,
+                        decimalPlaces,
                         LABEL_COLUMN_WIDTH,
                         () -> labelExtractor.apply(item),
                         () -> defaultValue,
@@ -804,13 +953,32 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         }
         return cellsByKey;
     }
-    private boolean allCellsValid() {
+    // 50 is a rough eyeball figure, not derived from anything precise -
+    // just enough room for a handful of short blueprint/species names
+    // before falling back, given confirmationBox's own fixed 800x400 box
+    // could otherwise overflow if many cells were invalid at once.
+    private static final int INVALID_LABELS_MAX_LENGTH = 50;
+    private static final String INVALID_LABELS_FALLBACK = "check red values";
+
+    // Empty string means every cell is currently valid - the one thing a
+    // caller needs to check. Otherwise joins each invalid cell's own
+    // DISPLAY name (not its key) in natural build order - the same order
+    // the player would scroll past them in the panel (capacity cells
+    // first, alphabetical among themselves per roomServicesSorted();
+    // species/HTYPE after, in whatever order RACES.all()/HTYPES.ALL()
+    // happen to provide) - no extra sort added on top, since a long list
+    // here is expected to be rare in practice.
+    private String invalidCellLabels() {
+        StringBuilder builder = new StringBuilder();
         for (GLabeledValue cell : this.allLabeledValues) {
             if (!cell.isValid()) {
-                return false;
+                if (builder.length() > 0) {
+                    builder.append(", ");
+                }
+                builder.append(cell.labelText());
             }
         }
-        return true;
+        return builder.length() > INVALID_LABELS_MAX_LENGTH ? INVALID_LABELS_FALLBACK : builder.toString();
     }
 
     // Dispatches to whichever of the three real transitions above matches
@@ -841,6 +1009,25 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         if (currentSelection != this.lastKnownSelection) {
             this.handlePendingSelectionChange(currentSelection);
         }
+    }
+
+    // "None" covers both a genuine absence of an active profile AND the
+    // (practically unreachable, by the time this label is ever visibly
+    // rendered) manager == null case - the panel can only be open at all
+    // once update() has fired at least once, by which point the Manager
+    // is guaranteed to exist; no need to distinguish the two here.
+    //
+    // KNOWN LIMITATION: no max-width/truncation set on this label, unlike
+    // GLabeledValue's own internal label (which does call setMaxWidth()).
+    // A sufficiently long active profile name could visually overflow past
+    // the panel's right edge - not fixed here, since the right truncation
+    // width depends on how much horizontal room the OTHER buttons in this
+    // same row actually leave, which wasn't measured precisely.
+    private void refreshActiveProfileLabel() {
+        ThalCapacityProfileManager manager = ThalCapacityProfileManager.instance();
+        ThalCapacityProfile activeProfile = manager == null ? null : manager.activeProfile();
+        String activeProfileName = activeProfile == null ? "None" : activeProfile.displayName();
+        this.activeProfileLabel.clear().add("Active: " + activeProfileName);
     }
 
     // ThalGDropDown has already visually applied newSelection by the time this
@@ -955,20 +1142,36 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         // STORED entries are ever updated this way; the two sentinels
         // never call this.
         //
-        // KNOWN LIMITATION: this.body's width was fixed at construction
-        // time from the ORIGINAL label's measured width. A rename to a
-        // significantly longer name won't grow the entry's own row width
-        // to match, and could visually clip in the dropdown - not fixed
-        // here, since re-deriving the body's sizing logic safely wasn't
-        // confirmed against ThalGDropDown's own row-layout expectations.
+        // RESOLVED (see render()'s own comment): a rename to a
+        // significantly longer name no longer visually clips - this
+        // entry's own body may still not grow to match (that part of the
+        // original limitation is unchanged), but render() now truncates
+        // against whatever width the body actually has, rather than
+        // drawing the full, unclipped text regardless.
         private void updateFrom(ThalCapacityProfile updatedProfile) {
             this.profile = updatedProfile;
             this.label.clear().add(updatedProfile.displayName());
         }
 
+        // Uses the 4-arg (X1, X2, Y1, Y2) GText overload, not the plain
+        // (x, y) one this used before - that overload internally clips to
+        // this.label's own maxWidth (confirmed elsewhere in this project:
+        // it substitutes X1 + maxWidth for whatever X2 is actually passed
+        // in), which is what actually makes truncation happen; the old
+        // 2-argument call drew the full text regardless of body width.
+        // maxWidth is set fresh from this.body.width() every render,
+        // rather than once at construction, specifically because body
+        // width now genuinely varies by context: this entry's own natural
+        // (popup-row) width when shown in the dropdown's expansion list,
+        // versus a narrower width ThalGDropDown temporarily imposes when
+        // rendering the selected entry inside the closed box (see its own
+        // render() comment). Re-deriving here means this entry doesn't
+        // need to know which context it's currently in - it just always
+        // truncates to whatever space it's actually been given.
         @Override
         protected void render(SPRITE_RENDERER r, float ds, boolean isActive, boolean isSelected, boolean isHovered) {
-            this.label.render(r, this.body.x1() + 4, this.body.y1() + 2);
+            this.label.setMaxWidth(this.body.width() - 8);
+            this.label.render(r, this.body.x1() + 4, this.body.x2() - 4, this.body.y1() + 2, this.body.y2());
         }
     }
 
@@ -1001,6 +1204,7 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
         @Override
         protected boolean render(Renderer r, float ds) {
             ThalCapacityUI.this.checkForSelectionChange();
+            ThalCapacityUI.this.refreshActiveProfileLabel();
             ThalCapacityUI.this.mainPanel.render(r, ds);
             ThalCapacityUI.this.topSection.render(r, ds);
             ThalCapacityUI.this.contentViewport.render(r, ds);
@@ -1047,6 +1251,65 @@ public final class ThalCapacityUI implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
     }
     @Override
     public void update(double deltaSeconds) {
+        if (!this.hasSyncedStoredProfiles) {
+            this.hasSyncedStoredProfiles = true;
+            this.syncStoredProfilesIntoDropdown();
+        }
+    }
+
+    // Deferred here rather than done eagerly inside buildUI()/
+    // buildProfileDropdown() (which run during createInstance() itself) -
+    // confirmed the hard way: ThalCapacityProfileManager's own
+    // createInstance() is NOT guaranteed to run before this class's own,
+    // and when it happens not to, ThalCapacityProfileManager.instance()
+    // is still null at buildProfileDropdown()'s own construction time,
+    // silently skipping every pre-existing profile with no error at all -
+    // exactly the "profiles on disk don't show up after restarting the
+    // game" symptom this fixes.
+    //
+    // By the time ANY script's update() fires for the first time,
+    // ScriptEngine has already finished calling createInstance() on EVERY
+    // loaded script - confirmed from ScriptEngine.java's own source:
+    // init(GAME) runs createInstance() on every script synchronously, in
+    // a single loop, strictly before GAME's own update loop (and so any
+    // script's own update()) ever begins. ThalCapacityProfileManager.
+    // instance() is therefore guaranteed non-null here, regardless of
+    // which script's createInstance() happened to run first.
+    private void syncStoredProfilesIntoDropdown() {
+        ThalCapacityProfileManager manager = ThalCapacityProfileManager.instance();
+        if (manager == null) {
+            log.error("syncStoredProfilesIntoDropdown(): ThalCapacityProfileManager.instance() was still null on "
+                    + "this SCRIPT_INSTANCE's own first update() call - this should be structurally impossible "
+                    + "given ScriptEngine's own confirmed lifecycle. Stored profiles will not appear in the "
+                    + "dropdown this session.");
+            return;
+        }
+
+        for (ThalCapacityProfile profile : manager.loadedProfiles()) {
+            ProfileDropdownEntry entry = ProfileDropdownEntry.forStoredProfile(profile);
+            this.profileDropdown.add(entry);
+            this.dropdownEntriesByProfile.put(profile, entry);
+        }
+        this.profileDropdown.init();
+
+        // Overrides <New Profile>'s own auto-select-first default (set
+        // back in buildProfileDropdown(), before any real profile even
+        // existed to select instead) - without this, the panel would
+        // default to a blank new profile on every single startup, even
+        // when the player already has a real active profile, purely as
+        // an unintended side effect of the sentinels being added first.
+        // openPanel()'s own existing logic (applyDropdownSelection(this.
+        // profileDropdown.selected())) already re-reads whatever's
+        // selected fresh each time the panel opens, so setting it here -
+        // well before the player could ever click the toggle button open
+        // it - is sufficient; no further wiring needed downstream.
+        ThalCapacityProfile activeProfile = manager.activeProfile();
+        if (activeProfile != null) {
+            ProfileDropdownEntry activeEntry = this.dropdownEntriesByProfile.get(activeProfile);
+            if (activeEntry != null) {
+                this.profileDropdown.setSelected(activeEntry);
+            }
+        }
     }
     @Override
     public void save(FilePutter file) {

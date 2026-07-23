@@ -309,11 +309,6 @@ public abstract class RoomService {
         return dailyPeakLoad;
     }
 
-    // Determines if this RoomService has the capability to satisfy NEEDs.
-    private boolean hasCapacity() {
-        return (this.need != null && this.total != 0);
-    }
-
     // Capacity-per-slot can never fall below 1.0; it would indicate a slot is available, but cannot be filled.
     // Schrodinger's physician bed. Any result at or below this threshold is therefore not a real capacity figure.
     private static final double MIN_CAPACITY_PER_SLOT = 0.99;
@@ -322,7 +317,7 @@ public abstract class RoomService {
     // DEPRECATED; call sites that still use this should be changed to call individual methods below.
     @Deprecated
     public double totalMultiplier() {
-        if (!hasCapacity()) {
+        if (this.need == null) {
             return 1.0;
         }
 
@@ -347,7 +342,10 @@ public abstract class RoomService {
     // An estimate built entirely from this session's observed data.
     // Returns a -1 sentinel if no estimate is available.
     public double liveCapacityPerSlot() {
-        if (!hasCapacity()) {
+        if (this.need == null) {
+            return -1.0;
+        }
+        if (this.total == 0) {
             return -1.0;
         }
 
@@ -375,7 +373,7 @@ public abstract class RoomService {
     // hypotheticalCapacityPerSlot(), the same safety net liveCapacityPerSlot()
     // relies on rather than duplicating.
     public double profileCapacityPerSlot() {
-        if (!hasCapacity()) {
+        if (this.need == null) {
             return -1.0;
         }
 
@@ -395,9 +393,10 @@ public abstract class RoomService {
     // The original NEED-rate-based capacity formula, unmodified in substance.
     // Only local variable names were changed for readability.
     // Functionality should be untouched for future compatibility.
-    // ALWAYS returns a valid capacity-per-slot. If a valid number cannot be found, logs an error and returns 1.0.
+    // ALWAYS returns a valid capacity-per-slot.
+    // If a valid number cannot be found for a room that should have it, logs an error and returns 1.0.
     public double hypotheticalCapacityPerSlot() {
-        if (!hasCapacity()) {
+        if (this.need == null) {
             return 1.0;
         }
 
@@ -604,7 +603,7 @@ public abstract class RoomService {
         double estimatedCapacityPerSlot = hypotheticalCapacityPerSlot();
         box.add(GFORMAT.i(box.text(), (int)(totalSlots * estimatedCapacityPerSlot)));
 
-        appendDivergenceLines(box, need, total() * hypotheticalCapacityPerSlot());
+        appendDivergenceLines(box, need, total() * totalMultiplier());
 
         box.NL();
         box.text(THAL_CAPACITY_DESCRIPTION);

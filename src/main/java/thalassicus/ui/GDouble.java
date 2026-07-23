@@ -1,5 +1,5 @@
 // GDouble.java
-// Document Version 1.0.2
+// Document Version 1.2.0
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
@@ -7,11 +7,11 @@ package thalassicus.ui;
 
 import init.sprite.UI.UI;
 import snake2d.SPRITE_RENDERER;
+import snake2d.Mouse;
 import snake2d.util.color.COLOR;
 import snake2d.util.sprite.text.Str;
 import snake2d.util.sprite.text.StringInputSprite;
 import util.colors.GCOLOR;
-import util.gui.misc.GInput;
 
 // A free-typed decimal input box for a value that has a live, changeable
 // default (e.g. RoomService.hypotheticalCapacityPerSlot()) unless the player
@@ -36,11 +36,11 @@ import util.gui.misc.GInput;
 // effect StringInputSprite already provides on its own (its placeholder only
 // ever appears while the buffer is empty AND unfocused), not something this
 // class needs to compute or store separately.
-public abstract class GDouble extends GInput {
-
-    // Two decimal places, matching the convention Jake's own UI uses
-    // elsewhere for decimal display.
-    private static final int DECIMAL_PLACES = 2;
+// Extends ThalGInput (our own fork of Jake's GInput), not GInput directly -
+// ThalGInput adds the one hook (textColor()) needed to actually paint
+// invalid input red; see its own header comment for why binding a color
+// before calling GInput's own render() silently doesn't work.
+public abstract class GDouble extends ThalGInput {
 
     // Buffer capacity, in characters. Str reserves one slot (spaceLeft()
     // is chars.length - last - 1, not chars.length - last) - almost
@@ -53,6 +53,15 @@ public abstract class GDouble extends GInput {
 
     private final double minimumValue;
     private final double maximumValue;
+    // How many digits after the decimal point this box accepts and
+    // displays - 0 makes this behave as a genuine integer field (no
+    // decimal point accepted at all, not just rounded away later; see
+    // DecimalInputSprite.acceptChar()). Supplied by the caller, same
+    // reasoning as minimumValue/maximumValue above - a species/HTYPE
+    // population count needing 0 rather than 2 is domain knowledge
+    // belonging to the capacity-profile feature, not to this general-
+    // purpose input box.
+    private final int decimalPlaces;
     private final DecimalInputSprite inputSprite;
 
     // Dedicated to this instance alone, deliberately NOT one of Str's own
@@ -64,17 +73,46 @@ public abstract class GDouble extends GInput {
     // same call.
     private final Str defaultValueDisplay = new Str(MAXIMUM_TYPED_LENGTH);
 
-    // Compared against inputSprite.listening() every render to detect the
-    // exact frame focus is lost - this class's only hand-rolled piece of
-    // state tracking, everything else reads directly off the sprite.
-    private boolean wasFocusedLastFrame = false;
+    // Tracks whether THIS control was the mouse-focused one last frame,
+    // read off Mouse.currentClicked (a stable, frame-consistent global)
+    // rather than inputSprite.listening() (the keyboard-listener global,
+    // which lags a frame behind and can straddle a frame boundary on
+    // blur). Detecting the blur EDGE off listening() was the original bug:
+    // clicking away could take this control from "never yet observed
+    // focused" straight to "not focused now" without the true->false
+    // transition handleFocusLost() watches for ever being visible on a
+    // single frame - so an erased (emptied) field's revert-to-default
+    // never fired, and the profile map entry was never removed. Typing a
+    // value was immune only because it commits via render()'s own
+    // per-frame VALID check, which never depended on this edge at all.
+    // Mouse.currentClicked is the same signal ThalGInput's own render()
+    // already trusts to keep listen() asserted each frame, so keying off
+    // it is consistent with how focus actually propagates here.
+    private boolean wasMouseFocusedLastFrame = false;
+
+    // Null means "nothing committed since the last revert/load" - tracked
+    // so committedValueSet() only fires on a genuine change, not every
+    // single frame the buffer happens to still parse as VALID. Without
+    // this, a profile with even one already-valid cell would re-fire that
+    // cell's commit callback every render forever, and a caller using it
+    // as an isDirty signal (as this mod's own ThalCapacityUI does) would
+    // see isDirty flip back to true on the very next frame after every
+    // save - confirmed the hard way in-game.
+    private Double lastCommittedValue;
+
+    // Two decimal places by default - matches this class's original,
+    // pre-decimalPlaces-parameter behavior exactly, so every existing
+    // caller (capacity-per-slot cells) needs no changes at all.
+    protected GDouble(double minimumValue, double maximumValue) {
+        this(minimumValue, maximumValue, 2);
+    }
 
     // minimumValue/maximumValue are supplied by the caller rather than
     // hardcoded here - the [1.0, 99999.0] capacity-per-slot range is domain
     // knowledge belonging to the capacity-profile feature, not to this
     // general-purpose input box.
-    protected GDouble(double minimumValue, double maximumValue) {
-        this(minimumValue, maximumValue, new DecimalInputSprite(minimumValue, maximumValue));
+    protected GDouble(double minimumValue, double maximumValue, int decimalPlaces) {
+        this(minimumValue, maximumValue, decimalPlaces, new DecimalInputSprite(minimumValue, maximumValue, decimalPlaces));
     }
 
     // Splitting construction this way exists solely to get a fully-built
@@ -82,13 +120,14 @@ public abstract class GDouble extends GInput {
     // no-argument constructor to defer to, so the sprite must exist before
     // super() runs, which in turn means it can't be a normal field
     // initializer referencing this.anything. DecimalInputSprite needing
-    // nothing from the outer instance (just the two bounds) is what makes
-    // this possible without a two-phase, set-the-owner-after-construction
-    // workaround.
-    private GDouble(double minimumValue, double maximumValue, DecimalInputSprite inputSprite) {
+    // nothing from the outer instance (just the two bounds and
+    // decimalPlaces) is what makes this possible without a two-phase,
+    // set-the-owner-after-construction workaround.
+    private GDouble(double minimumValue, double maximumValue, int decimalPlaces, DecimalInputSprite inputSprite) {
         super(inputSprite);
         this.minimumValue = minimumValue;
         this.maximumValue = maximumValue;
+        this.decimalPlaces = decimalPlaces;
         this.inputSprite = inputSprite;
     }
 
@@ -97,14 +136,22 @@ public abstract class GDouble extends GInput {
     // hypotheticalCapacityPerSlot()) can genuinely change between frames.
     protected abstract double liveDefaultValue();
 
-    // Fires every render while the buffer currently parses to a valid,
-    // in-bounds number - matches this mod's existing immediate-update input
-    // convention (RoomService's own tiers commit the moment a value is
-    // known, nothing here waits for an explicit confirmation step) rather
-    // than only committing on blur. Fires with the RAW typed value on every
-    // such frame, and then ONCE MORE with the rounded value the instant
-    // focus is lost - typing a third-or-later decimal digit is allowed
-    // right up until then, not blocked at the keystroke level.
+    // CORRECTED (2026/07/22): fires the moment the buffer first parses to
+    // a valid, in-bounds number, and again each time that value genuinely
+    // changes - NOT every render regardless of change, which is what this
+    // comment used to say and what the code used to do. That unconditional
+    // per-frame firing was a real bug: any caller treating a commit as "the
+    // player changed something" (this mod's own ThalCapacityUI does, for
+    // isDirty) would see it fire forever on every already-valid cell, long
+    // after the player had stopped touching it - confirmed the hard way,
+    // saving a profile and then immediately seeing an "unsaved changes"
+    // prompt with nothing having actually changed. Still matches this
+    // mod's immediate-update convention (nothing waits for an explicit
+    // confirmation step) - it's the redundant re-firing that was wrong,
+    // not the immediacy itself. Also fires once more with the rounded
+    // value the instant focus is lost, if rounding changed it from the raw
+    // typed value - typing a third-or-later decimal digit is allowed right
+    // up until then, not blocked at the keystroke level.
     protected abstract void committedValueSet(double committedValue);
 
     // Fires exactly once, the frame focus is lost while the buffer is
@@ -132,6 +179,10 @@ public abstract class GDouble extends GInput {
             this.inputSprite.textSet(existingValueOrNull);
             this.inputSprite.currentStateSet(DecimalInputSprite.State.VALID);
         }
+        // Set directly, not through commitIfChanged() below - this is the
+        // caller declaring our own state, not a player edit, and must
+        // never itself be treated as a "value just changed" event.
+        this.lastCommittedValue = existingValueOrNull;
     }
 
     // True whenever the current buffer would NOT block a profile save -
@@ -143,42 +194,67 @@ public abstract class GDouble extends GInput {
 
     @Override
     protected void render(SPRITE_RENDERER r, float ds, boolean isActive, boolean isSelected, boolean isHovered) {
-        this.defaultValueDisplay.clear().add(this.liveDefaultValue(), DECIMAL_PLACES);
+        this.defaultValueDisplay.clear().add(this.liveDefaultValue(), this.decimalPlaces);
         this.inputSprite.placeHolder(this.defaultValueDisplay);
 
-        boolean isFocusedNow = this.inputSprite.listening();
-        if (this.wasFocusedLastFrame && !isFocusedNow) {
+        // Blur is detected off Mouse.currentClicked, NOT inputSprite.listening()
+        // - see wasMouseFocusedLastFrame's own comment for why the latter
+        // silently missed this edge. super.render() below (ThalGInput's own)
+        // still re-asserts listen() every frame while this stays the clicked
+        // control, so actual keyboard focus continues to track correctly;
+        // this class just no longer relies on that volatile global to detect
+        // the blur moment.
+        boolean isMouseFocusedNow = Mouse.currentClicked == this;
+        if (this.wasMouseFocusedLastFrame && !isMouseFocusedNow) {
             this.handleFocusLost();
         }
-        this.wasFocusedLastFrame = isFocusedNow;
+        this.wasMouseFocusedLastFrame = isMouseFocusedNow;
 
         if (this.inputSprite.currentState() == DecimalInputSprite.State.VALID) {
-            this.committedValueSet(this.inputSprite.parsedValue());
+            this.commitIfChanged(this.inputSprite.parsedValue());
         }
 
-        // GCOLOR.UI().BAD.hovered is confirmed safe to use here despite its
-        // name - GColorUIModel.hovered is just the brightest of four fixed
-        // shades (normal/hovered/selected/inactive), not something gated on
-        // actual mouse hover. Using .hovered for maximum visibility; .normal
-        // (a dimmer red) is the other reasonable choice here and is purely
-        // a UX call, not a technical one - worth Victoria's own judgment
-        // once this renders in-game.
-        COLOR textColor = this.inputSprite.currentState() == DecimalInputSprite.State.INVALID
+        super.render(r, ds, isActive, isSelected, isHovered);
+    }
+
+    // CORRECTED (2026/07/22): this used to be a COLOR bound before calling
+    // super.render(), then unbound after - confirmed the hard way that it
+    // never actually painted red, since GInput's own render() (what
+    // super.render() called into, before this class extended ThalGInput
+    // instead) does its own color-binding work first and clobbers anything
+    // bound outside it. ThalGInput.render() now calls this method at
+    // exactly the right moment - immediately before the actual text draw -
+    // so this override just needs to answer the question, not manage
+    // when it applies.
+    //
+    // GCOLOR.UI().BAD.hovered is confirmed safe to use here despite its
+    // name - GColorUIModel.hovered is just the brightest of four fixed
+    // shades (normal/hovered/selected/inactive), not something gated on
+    // actual mouse hover. Using .hovered for maximum visibility; .normal
+    // (a dimmer red) is the other reasonable choice here and is purely
+    // a UX call, not a technical one - worth Victoria's own judgment
+    // once this renders in-game.
+    @Override
+    protected COLOR textColor() {
+        return this.inputSprite.currentState() == DecimalInputSprite.State.INVALID
                 ? GCOLOR.UI().BAD.hovered
                 : COLOR.WHITE100;
-        textColor.bind();
-        super.render(r, ds, isActive, isSelected, isHovered);
-        COLOR.unbind();
     }
 
     private void handleFocusLost() {
         switch (this.inputSprite.currentState()) {
             case VALID -> {
-                double rounded = round(this.inputSprite.parsedValue());
+                double rounded = this.round(this.inputSprite.parsedValue());
                 this.inputSprite.textSet(rounded);
-                this.committedValueSet(rounded);
+                this.commitIfChanged(rounded);
             }
-            case NEUTRAL -> this.revertToDefault();
+            case NEUTRAL -> {
+                this.revertToDefault();
+                // Reset, not left stale - otherwise re-typing the exact
+                // same number this box held before being cleared would be
+                // silently treated as "unchanged" and never re-committed.
+                this.lastCommittedValue = null;
+            }
             case INVALID -> {
                 // Left untouched on purpose - the box stays red and Save
                 // stays blocked until the player returns and either fixes
@@ -187,8 +263,22 @@ public abstract class GDouble extends GInput {
         }
     }
 
-    private static double round(double value) {
-        double scale = Math.pow(10, DECIMAL_PLACES);
+    // The one place committedValueSet() is ever actually invoked from -
+    // both render()'s own per-frame check and handleFocusLost()'s VALID
+    // case route through here, so there is exactly one definition of
+    // "changed" to maintain, not two. Fires (and records) only when value
+    // genuinely differs from whatever was last committed; a caller using
+    // this as a dirty-tracking signal (this mod's own ThalCapacityUI does)
+    // depends on that distinction to mean something real.
+    private void commitIfChanged(double value) {
+        if (this.lastCommittedValue == null || this.lastCommittedValue != value) {
+            this.committedValueSet(value);
+            this.lastCommittedValue = value;
+        }
+    }
+
+    private double round(double value) {
+        double scale = Math.pow(10, this.decimalPlaces);
         return Math.round(value * scale) / scale;
     }
 
@@ -209,24 +299,29 @@ public abstract class GDouble extends GInput {
 
         private final double minimumValue;
         private final double maximumValue;
+        private final int decimalPlaces;
         private DecimalInputSprite.State currentState = DecimalInputSprite.State.NEUTRAL;
 
-        private DecimalInputSprite(double minimumValue, double maximumValue) {
+        private DecimalInputSprite(double minimumValue, double maximumValue, int decimalPlaces) {
             super(MAXIMUM_TYPED_LENGTH, UI.FONT().S);
             this.minimumValue = minimumValue;
             this.maximumValue = maximumValue;
+            this.decimalPlaces = decimalPlaces;
         }
 
         // Gatekeeps which characters ever reach StringInputSprite's own
         // acceptChar() (which does the actual cursor/selection/insertion
         // work and calls change() itself once a character is genuinely
         // accepted) - a rejected character here simply never happens, no
-        // buffer-reverting cleanup step required afterward.
+        // buffer-reverting cleanup step required afterward. decimalPlaces
+        // == 0 rejects '.' outright, making this a genuine integer field -
+        // the player can never type a decimal point in the first place,
+        // not merely have one rounded away later on blur.
         @Override
         protected void acceptChar(char c) {
             if (Character.isDigit(c)) {
                 super.acceptChar(c);
-            } else if (c == '.' && !this.containsDecimalPoint()) {
+            } else if (c == '.' && this.decimalPlaces > 0 && !this.containsDecimalPoint()) {
                 super.acceptChar(c);
             }
         }
@@ -279,7 +374,7 @@ public abstract class GDouble extends GInput {
         // digits from raw arithmetic, never touching String.format or any
         // locale.
         private void textSet(double value) {
-            this.text().clear().add(value, DECIMAL_PLACES);
+            this.text().clear().add(value, this.decimalPlaces);
         }
 
         // Counterpart to textSet() above - empties the buffer and resets

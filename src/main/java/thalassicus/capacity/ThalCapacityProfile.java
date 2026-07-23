@@ -1,5 +1,5 @@
 // ThalCapacityProfile.java
-// Document Version 1.6.0
+// Document Version 1.7.0
 // Creation date: 2026/07/18
 // Creator: Thalassicus
 
@@ -206,9 +206,9 @@ public final class ThalCapacityProfile {
         String displayName = json.text("DISPLAY_NAME", "");
         String description = json.text("DESCRIPTION", "");
         ThalCapacityProfile profile = ThalCapacityProfile.blank(displayName, description);
-        readJsonBlock(json, "CAPACITIES_PER_SLOT", profile.capacitiesPerSlot);
-        readJsonBlock(json, "SPECIES", profile.speciesPopulations);
-        readJsonBlock(json, "HTYPES", profile.htypePopulations);
+        readJsonBlock(json, "CAPACITIES_PER_SLOT", profile.capacitiesPerSlot, false);
+        readJsonBlock(json, "SPECIES", profile.speciesPopulations, true);
+        readJsonBlock(json, "HTYPES", profile.htypePopulations, true);
         return profile;
     }
 
@@ -228,11 +228,12 @@ public final class ThalCapacityProfile {
         return block;
     }
 
-    private static void readJsonBlock(Json json, String key, Map<String, Double> targetMap) {
+    private static void readJsonBlock(Json json, String key, Map<String, Double> targetMap, boolean roundToWholeNumber) {
         if (json.jsonIs(key)) {
             Json block = json.json(key);
             for (String entryKey : block.keys()) {
-                targetMap.put(entryKey, block.d(entryKey));
+                double value = block.d(entryKey);
+                targetMap.put(entryKey, roundToWholeNumber ? Math.round(value) : value);
             }
         }
     }

@@ -1,5 +1,5 @@
 // GLabeledValue.java
-// Document Version 1.1.0
+// Document Version 1.3.0
 // Creation date: 2026/07/19
 // Creator: Thalassicus
 
@@ -39,9 +39,29 @@ public final class GLabeledValue extends GuiSection {
     private final GText label;
     private final GDouble valueInput;
 
+    // Two decimal places by default - matches this class's original,
+    // pre-decimalPlaces-parameter behavior exactly, so every existing
+    // caller (capacity-per-slot cells) needs no changes at all.
     public GLabeledValue(
             double minimumValue,
             double maximumValue,
+            int labelWidth,
+            Supplier<CharSequence> labelTextSupplier,
+            DoubleSupplier defaultValueSupplier,
+            DoubleConsumer committedValueConsumer,
+            Runnable revertToDefaultAction
+    ) {
+        this(minimumValue, maximumValue, 2, labelWidth, labelTextSupplier, defaultValueSupplier, committedValueConsumer, revertToDefaultAction);
+    }
+
+    // decimalPlaces sits immediately after maximumValue, mirroring
+    // GDouble's own identical parameter position - this class doesn't
+    // interpret the value itself, just passes it straight through to the
+    // GDouble it wraps.
+    public GLabeledValue(
+            double minimumValue,
+            double maximumValue,
+            int decimalPlaces,
             int labelWidth,
             Supplier<CharSequence> labelTextSupplier,
             DoubleSupplier defaultValueSupplier,
@@ -57,7 +77,7 @@ public final class GLabeledValue extends GuiSection {
         // computed fresh on render.
         this.label = new GText(UI.FONT().S, "").setMaxWidth(labelWidth);
 
-        this.valueInput = new GDouble(minimumValue, maximumValue) {
+        this.valueInput = new GDouble(minimumValue, maximumValue, decimalPlaces) {
             @Override
             protected double liveDefaultValue() {
                 return defaultValueSupplier.getAsDouble();
@@ -83,6 +103,17 @@ public final class GLabeledValue extends GuiSection {
     // same reasoning as GDouble's own isValid().
     public boolean isValid() {
         return this.valueInput.isValid();
+    }
+
+    // Lets a caller name which SPECIFIC cells are invalid (e.g. Save's own
+    // error message), rather than only knowing a table-wide yes/no via
+    // isValid() above. Calls labelTextSupplier directly, not the cached
+    // this.label GText - that field only refreshes during render() (see
+    // its own comment), so reading it here instead could be one frame
+    // stale, breaking the never-cache-always-re-derive rule this class
+    // otherwise holds to everywhere else.
+    public CharSequence labelText() {
+        return this.labelTextSupplier.get();
     }
 
     // Pure pass-through to GDouble's own existingValueSet() - closes the
