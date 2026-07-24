@@ -157,7 +157,7 @@
         <!-- These settings will go into the mods _Info.txt file -->
         <mod.version>${project.version}</mod.version>
         <mod.name>Service Estimate Fix</mod.name>
-        <mod.description>This mod corrects a simple vanilla bug in the estimate of service capacity. If you like this mod, you can find my others on this mod's page in the Steam Workshop.</mod.description>
+        <mod.description>This mod provides tools to better estimate the capacity of service rooms. If you like this mod, you can find my others on this mod's page in the Steam Workshop. Source code: `github.com/thalassicus-gaming`.</mod.description>
         <mod.author>Thalassicus</mod.author>
         <mod.info></mod.info>
         <!--

@@ -25,90 +25,78 @@ import snake2d.util.file.Json;
 import snake2d.util.file.JsonE;
 import thalassicus.util.ThalsLogger;
 
-// Owns the loaded-profile collection, which one is active for planning
-// purposes, and all filesystem/game-world reaching-in ThalCapacityProfile
-// itself deliberately does not do. updateProfiles() is the one coordinated
-// entry point for every add/remove/rename the UI performs against stored
-// profiles; profiles are identified by their serialized (filesystem-safe)
-// name, since that's the level uniqueness is actually enforced at.
+// Owns the loaded profile collection, active profile, persistence, and
+// game-world interactions. ThalCapacityProfile remains a passive data
+// object; all collection and filesystem operations are centralized here.
 public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_INSTANCE {
-
     public static final ThalsLogger log = new ThalsLogger(
             ThalsLogger.INFO,
             System.getenv("APPDATA") + "\\songsofsyx\\logs\\ThalCapacityProfileManager.log"
     );
-
-    private static ThalCapacityProfileManager instance;
-
-    public static ThalCapacityProfileManager instance() {
-        return instance;
-    }
-
     private static final CharSequence NAME = "Thal Capacity Profile Manager";
     private static final CharSequence DESCRIPTION = "Internal utility. Manages saved capacity-planning profiles and which one is active for this save. Not a gameplay-affecting script.";
-
     private static final Path PROFILES_DIRECTORY = Path.of(System.getenv("APPDATA"), "songsofsyx", "mods", "Service Estimate Fix", "Profiles");
-
     private static final double MIN_CAPACITY_PER_SLOT = 0.99;
-
-    // Debug scaffolding: refreshes a reserved profile once per day from
-    // this session's own live data, independent of the real UI panel's own
-    // Live Data selection - a way to inspect capture output directly.
+    // Debug-only: refreshes a reserved profile from live data once per day.
     private static final boolean DAILY_REFRESH_ENABLED = false;
     private static final String DEBUG_PROFILE_NAME = "debug_profile";
-
-    // The reserved serialized name a shipped default profile must resolve
-    // to. A player is never required to have one - if none is found,
-    // activeProfile simply stays null, and every capacity/population field
-    // falls back to its built-in default, the same as any other undefined
-    // entry.
+    // Reserved serialized name for the shipped default profile.
+    //
+    // A default profile is optional. If none exists, activeProfile remains
+    // null and callers fall back to built-in defaults.
     private static final String DEFAULT_PROFILE_FILE_NAME = "default_profile";
-
+    private static ThalCapacityProfileManager instance;
     private final List<ThalCapacityProfile> loadedProfiles = new ArrayList<>();
     private ThalCapacityProfile activeProfile;
     private int lastRefreshDay = -1;
+
+    //
+    // Public Methods
+    //
 
     public ThalCapacityProfileManager() {
         this.loadAllProfiles();
         this.applyDefaultProfileIfNoneActive();
     }
 
-    public List<ThalCapacityProfile> loadedProfiles() {
-        return this.loadedProfiles;
+    public static ThalCapacityProfileManager instance() {
+        return instance;
     }
 
-    public ThalCapacityProfile activeProfile() {
-        return this.activeProfile;
-    }
 
-    // Nullable by design - see DEFAULT_PROFILE_FILE_NAME's own comment.
-    public void activeProfileSet(ThalCapacityProfile activeProfile) {
-        this.activeProfile = activeProfile;
-    }
-
-    // The one coordinated entry point for every stored-profile change:
-    // create, overwrite, delete, and rename (delete-plus-create under a
-    // different name) are all expressed as some combination of these two
-    // arguments, rather than as separate named operations. Deliberately
-    // does NOT refuse or prompt on a name collision - that confirmation is
-    // the UI's own responsibility (findProfileBySerializedName lets it
-    // check first), not this method's; by the time this is called, the
-    // caller has already decided to proceed.
-    //
-    // profileToAdd is deep-copied before storing, so the caller's own
-    // in-memory copy is never aliased with what ends up in loadedProfiles.
-    //
-    // UpdateResult.succeeded() is the AND of every disk operation actually
-    // attempted (the store's write, the remove's delete, whichever of the
-    // two ran) - a failure on EITHER side reports the whole call as
-    // failed, even in the specific case where the store half genuinely
-    // succeeded and only the OLD file's deletion (during a rename) failed
-    // to clean up. That's a real, if fairly benign, asymmetry: the new
-    // data is always safe regardless (create-before-remove), so a
-    // caller that wants to treat "wrote fine, stray old file left behind"
-    // as a soft, still-proceed-anyway success rather than a hard failure
-    // would need its own finer-grained handling - this method reports the
-    // simpler, more conservative "everything attempted must have worked."
+    /*
+     * Central entry point for every stored-profile mutation.
+     *
+     * Invariant:
+     *
+     * loadedProfiles owns the canonical in-memory representation of every stored
+     * profile. profileToAdd is always deep-copied before insertion so the manager
+     * never shares object identity with higher layers.
+     *
+     * This intentionally separates stored state from editable state. For example,
+     * ThalCapacityUI keeps a long-lived scratch profile, while the manager owns its
+     * own persistent copy. Saving therefore does not require the UI to replace its
+     * working object with the manager's stored instance, avoiding reference
+     * aliasing between the editing and persistence layers.
+     *
+     * Operations:
+     *
+     * +-----------------+-----------------+------------------------------+
+     * | profileToRemove | profileToAdd    | Operation                    |
+     * +-----------------+-----------------+------------------------------+
+     * | null            | non-null        | Create or overwrite          |
+     * | non-null        | null            | Delete                       |
+     * | non-null        | non-null        | Rename or replace            |
+     * | null            | null            | Invalid (throws exception)   |
+     * +-----------------+-----------------+------------------------------+
+     *
+     * When both arguments are non-null, the new profile is stored before the old
+     * profile is removed. This ordering guarantees that a failed remove operation
+     * cannot destroy newly-written data.
+     *
+     * Name-collision policy belongs to the caller. By the time this method is
+     * invoked, any required overwrite confirmation has already occurred.
+     */
     public UpdateResult updateProfiles(ThalCapacityProfile profileToRemove, ThalCapacityProfile profileToAdd) {
         if (profileToRemove == null && profileToAdd == null) {
             throw new IllegalArgumentException("updateProfiles() requires at least one non-null argument.");
@@ -127,16 +115,97 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
             succeeded &= this.removeProfile(profileToRemove);
         }
 
+        // Leave loadedProfiles as whatever was successfully read so far.
+
         this.sortLoadedProfiles();
         return new UpdateResult(storedProfile, succeeded);
     }
 
-    // storedProfile is null only when updateProfiles() was a pure remove
-    // (profileToAdd == null) - distinct from succeeded being false, which
-    // signals an actual disk-operation failure. A caller needs both: which
-    // profile is now canonical, and whether it's safe to trust that the
-    // requested change actually persisted.
+    // storedProfile is null only for pure deletions.
+    // succeeded reports whether every attempted disk operation completed.
     public record UpdateResult(ThalCapacityProfile storedProfile, boolean succeeded) {
+    }
+
+    public List<ThalCapacityProfile> loadedProfiles() {
+        return this.loadedProfiles;
+    }
+
+    public ThalCapacityProfile activeProfile() {
+        return this.activeProfile;
+    }
+
+    // Null means "no active profile"; callers fall back to defaults.
+    public void activeProfileSet(ThalCapacityProfile activeProfile) {
+        this.activeProfile = activeProfile;
+    }
+
+    // Accepts either a display name or an already-serialized name.
+    // Re-sanitizing an already-serialized name is a no-op.
+    public ThalCapacityProfile findProfileBySerializedName(String displayName) {
+        String targetSerializedName = sanitizeFileName(displayName);
+        for (ThalCapacityProfile profile : this.loadedProfiles) {
+            if (sanitizeFileName(profile.displayName()).equals(targetSerializedName)) {
+                return profile;
+            }
+        }
+        return null;
+    }
+
+    // Exposes default-profile detection without leaking the serialized name
+    // or filename sanitization rules.
+    public boolean isDefaultProfileName(String displayName) {
+        return sanitizeFileName(displayName).equals(DEFAULT_PROFILE_FILE_NAME);
+    }
+
+    // Skip unreadable profile files rather than aborting the entire load.
+    public void loadAllProfiles() {
+        this.loadedProfiles.clear();
+        if (!Files.isDirectory(PROFILES_DIRECTORY)) {
+            return;
+        }
+
+        try (var paths = Files.list(PROFILES_DIRECTORY)) {
+            for (Path path : paths.toList()) {
+                try {
+                    this.loadedProfiles.add(loadProfileFromFile(path));
+                } catch (Exception e) {
+                }
+            }
+        } catch (IOException e) {
+        }
+
+        // Leave loadedProfiles as whatever was successfully read so far.
+
+        this.sortLoadedProfiles();
+    }
+
+    // Clears existing data so removed blueprints do not leave stale entries.
+    public void populateFromLiveData(ThalCapacityProfile profile) {
+        profile.clear();
+        this.captureCapacitiesPerSlot(profile);
+        this.captureSpeciesAndHTypePopulations(profile);
+    }
+
+
+
+    //
+    // Private Methods
+    //
+
+    private static ThalCapacityProfile loadProfileFromFile(Path path) {
+        Json json = new Json(path);
+        return ThalCapacityProfile.deserialize(json);
+    }
+
+    // Preserve lowercase letters and digits; replace all other characters
+    // with underscores.
+    //
+    // Locale.ROOT avoids locale-dependent lowercase conversions.
+    //
+    // Warning: no length cap - an unusually long display name produces an
+    // equally long filename, with no truncation against OS path-length limits.
+    private static String sanitizeFileName(String displayName) {
+        return displayName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "_");
     }
 
     private boolean serializedNamesMatch(ThalCapacityProfile profileA, ThalCapacityProfile profileB) {
@@ -146,12 +215,9 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         return sanitizeFileName(profileA.displayName()).equals(sanitizeFileName(profileB.displayName()));
     }
 
-    // Overwrites any existing profile sharing profileToAdd's serialized
-    // name. If that existing profile happened to be the active one,
-    // activeProfile is re-pointed at its replacement rather than left
-    // dangling on an object no longer in loadedProfiles. The in-memory add
-    // always happens regardless of whether the disk write below succeeds -
-    // only the persisted-to-disk half of this operation can actually fail.
+    // Replaces any existing profile with the same serialized name.
+    // If the replaced profile was active, activeProfile is redirected to the
+    // replacement instance.
     private UpdateResult storeProfile(ThalCapacityProfile profileToAdd) {
         ThalCapacityProfile storedProfile = ThalCapacityProfile.deepCopy(profileToAdd);
 
@@ -177,38 +243,6 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         return succeeded;
     }
 
-    // Sanitizes displayName the same way stored profiles are matched
-    // against, so a caller can pass either a raw display name or an
-    // already-serialized one (DEFAULT_PROFILE_FILE_NAME, DEBUG_PROFILE_NAME)
-    // interchangeably - re-sanitizing an already-sanitized string is a
-    // no-op.
-    //
-    // Profiles saved before this file's sanitizeFileName fix may
-    // have been written under names that now collide with a different
-    // profile under the corrected scheme (e.g. two legacy files that only
-    // differed by a digit). loadAllProfiles() does not currently detect or
-    // reconcile that; this method will simply return whichever colliding
-    // profile appears first in loadedProfiles.
-    public ThalCapacityProfile findProfileBySerializedName(String displayName) {
-        String targetSerializedName = sanitizeFileName(displayName);
-        for (ThalCapacityProfile profile : this.loadedProfiles) {
-            if (sanitizeFileName(profile.displayName()).equals(targetSerializedName)) {
-                return profile;
-            }
-        }
-        return null;
-    }
-
-    // True when displayName would serialize to the same file the shipped
-    // default profile occupies. Exposed as its own method rather than
-    // making DEFAULT_PROFILE_FILE_NAME or sanitizeFileName public, so the
-    // UI can ask the question without re-implementing (and eventually
-    // drifting from) either - the comparison has to go through
-    // sanitizeFileName to be meaningful at all, since "Default Profile",
-    // "default profile", and "default_profile" all serialize identically.
-    public boolean isDefaultProfileName(String displayName) {
-        return sanitizeFileName(displayName).equals(DEFAULT_PROFILE_FILE_NAME);
-    }
 
     private void sortLoadedProfiles() {
         this.loadedProfiles.sort(Comparator.comparing(ThalCapacityProfile::displayName, String.CASE_INSENSITIVE_ORDER));
@@ -240,70 +274,12 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         }
     }
 
-    private static ThalCapacityProfile loadProfileFromFile(Path path) {
-        Json json = new Json(path);
-        return ThalCapacityProfile.deserialize(json);
-    }
-
-    // A profile file that fails to load (corrupt, hand-edited into an
-    // invalid state) is skipped rather than aborting the whole refresh -
-    // one bad file shouldn't hide every other valid profile from the
-    // player.
-    public void loadAllProfiles() {
-        this.loadedProfiles.clear();
-        if (!Files.isDirectory(PROFILES_DIRECTORY)) {
-            return;
-        }
-
-        try (var paths = Files.list(PROFILES_DIRECTORY)) {
-            for (Path path : paths.toList()) {
-                try {
-                    this.loadedProfiles.add(loadProfileFromFile(path));
-                } catch (Exception e) {
-                    // Skip: one unreadable profile file shouldn't prevent
-                    // every other valid profile from loading.
-                }
-            }
-        } catch (IOException e) {
-            // Leave loadedProfiles as whatever was successfully read so far.
-        }
-
-        this.sortLoadedProfiles();
-    }
-
     private Path profileFilePath(String displayName) {
         return PROFILES_DIRECTORY.resolve(sanitizeFileName(displayName) + ".txt");
     }
 
-    // Preserves digits alongside lowercase letters - everything else
-    // (spaces, punctuation, non-Latin characters) becomes an underscore.
-    // Locale.ROOT avoids toLowerCase()'s default-locale sensitivity (some
-    // locales, e.g. Turkish, lowercase certain characters unexpectedly).
-    //
-    // TODO: no length cap - an unusually long display name produces an
-    // equally long filename, with no truncation against OS path-length
-    // limits.
-    private static String sanitizeFileName(String displayName) {
-        return displayName.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", "_");
-    }
-
-    // Refreshes an existing profile's data in place from the current
-    // city's live state - clears the profile's own maps first, so a
-    // blueprint demolished since the last capture doesn't leave a stale
-    // entry behind.
-    public void populateFromLiveData(ThalCapacityProfile profile) {
-        profile.clear();
-        this.captureCapacitiesPerSlot(profile);
-        this.captureSpeciesAndHTypePopulations(profile);
-    }
-
-    // Delegates enumeration to ThalRoomServiceRegistry, writing only the
-    // entries whose liveCapacityPerSlot() clears MIN_CAPACITY_PER_SLOT. A
-    // blueprint with no live data yet is left absent rather than
-    // backfilled with a hypothetical value - that would make this
-    // profile's data silently go stale the moment vanilla's own formula or
-    // rate data changes in some future patch, defeating the point of it
-    // being a captured, real observation.
+    // Record only observed capacities. Services with no live data are left
+    // absent rather than storing hypothetical values.
     private void captureCapacitiesPerSlot(ThalCapacityProfile profile) {
         ThalRoomServiceRegistry.roomServicesByKey().values().forEach(service -> this.captureCapacity(profile, service.room().key, service.liveCapacityPerSlot()));
     }
@@ -314,10 +290,8 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         }
     }
 
-    // Purely informational population breakdowns by race and by HTYPE, for
-    // a player choosing between saved profiles later. STATS.POP().pop(race,
-    // hType) already gives a direct population count - no live-entity scan
-    // needed, unlike the eligibility tallies elsewhere in this mod.
+    // Captures informational population totals for profile comparison.
+    // Uses STATS.POP() directly rather than scanning live entities.
     private void captureSpeciesAndHTypePopulations(ThalCapacityProfile profile) {
         for (Race race : RACES.all()) {
             double total = 0.0;
@@ -341,6 +315,21 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
             }
         }
     }
+
+    private void refreshDebugProfile() {
+        ThalCapacityProfile debugProfile = this.findProfileBySerializedName(DEBUG_PROFILE_NAME);
+        if (debugProfile == null) {
+            debugProfile = ThalCapacityProfile.blank(DEBUG_PROFILE_NAME, "Debug: refreshed once per day from this session's own live data.");
+            this.loadedProfiles.add(debugProfile);
+        }
+
+        this.populateFromLiveData(debugProfile);
+        this.saveProfile(debugProfile);
+    }
+
+    //
+    // Overrides
+    //
 
     @Override
     public CharSequence name() {
@@ -378,8 +367,8 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         return created;
     }
 
-    // Debug scaffolding only - see DAILY_REFRESH_ENABLED's own comment.
     @Override
+    // Debug scaffolding only.
     public void update(double deltaSeconds) {
         if (!DAILY_REFRESH_ENABLED) {
             return;
@@ -392,32 +381,14 @@ public final class ThalCapacityProfileManager implements SCRIPT, SCRIPT.SCRIPT_I
         }
     }
 
-    private void refreshDebugProfile() {
-        ThalCapacityProfile debugProfile = this.findProfileBySerializedName(DEBUG_PROFILE_NAME);
-        if (debugProfile == null) {
-            debugProfile = ThalCapacityProfile.blank(DEBUG_PROFILE_NAME, "Debug: refreshed once per day from this session's own live data.");
-            this.loadedProfiles.add(debugProfile);
-        }
-
-        this.populateFromLiveData(debugProfile);
-        this.saveProfile(debugProfile);
-    }
-
-    // Persists only which profile is active, by display name -
-    // loadedProfiles itself is never written here, since it's already
-    // fully rebuilt from disk in the constructor every session.
     @Override
+    // Persist only the active profile reference. Profile contents are loaded directly from disk each session.
     public void save(FilePutter file) {
         file.chars(this.activeProfile == null ? "" : this.activeProfile.displayName());
     }
 
-    // Resolved by serialized name rather than exact display-name equality
-    // - matches the level uniqueness is actually enforced at, so a saved
-    // reference stays resolvable even if some intervening rename left the
-    // exact display-name string slightly different. A name with no match
-    // (a profile renamed or deleted since this save was made) resolves to
-    // null rather than throwing.
     @Override
+    // Resolve the saved active profile by serialized name rather than exact display-name equality.
     public void load(FileGetter file) throws IOException {
         String activeProfileName = file.chars();
         this.activeProfile = activeProfileName.isEmpty() ? null : this.findProfileBySerializedName(activeProfileName);
