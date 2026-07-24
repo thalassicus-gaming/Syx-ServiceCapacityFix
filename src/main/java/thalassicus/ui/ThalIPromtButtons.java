@@ -23,16 +23,13 @@ import view.interrupter.Interrupter;
 import view.interrupter.InterManager;
 import view.keyboard.KEYS;
 
-// A fork of Jake's own view.interrupter.IPromtYesNO, generalizing its
-// fixed two-icon-button layout into an arbitrary list of labeled GButt's.
-// Exists because nothing in Interrupters offers a NORMAL-SIZED
-// confirmation (matching IPromtYesNO's own modest 800x400 boxed GPanel,
-// not IPromtScreen's deliberately full-screen treatment) with more than
-// two buttons, or with real text labels instead of fixed icons.
-//
-// Extending IPromtYesNO wasn't possible - its own fields (text, section,
-// box, yes, no) are all private, unreachable even from a subclass, same
-// reason ThalGDropDown had to fork GDropDown rather than extend it.
+/*
+ * Generalizes IPromtYesNO into a normal-sized confirmation dialog with an
+ * arbitrary number of labeled buttons.
+ *
+ * Forked rather than extended because the required state in IPromtYesNO is
+ * private.
+ */
 public class ThalIPromtButtons extends Interrupter {
 
     private final GTextR text = new GTextR(UI.FONT().M, 1000, DIR.C);
@@ -41,14 +38,12 @@ public class ThalIPromtButtons extends Interrupter {
     private boolean dismissable;
     private final InterManager m;
 
-    // Fires on EVERY exit path - any button click, or ESC/right-click
-    // dismiss - not just one specific button. Mirrors IPromtScreen's own
-    // deactivateAction. IPromtYesNO (the vanilla class this forks) has no
-    // equivalent hook at all - only its own two hardcoded buttons' own
-    // clickA() calls hide() directly, which never fires on a dismiss/ESC
-    // exit at all. Without this, a caller relying on "something always
-    // runs when this closes" would get silently, permanently stuck the
-    // moment a player dismissed via ESC instead of clicking a button.
+    /*
+     * Invoked exactly once whenever the dialog closes, regardless of whether
+     * it was dismissed by a button, ESC, or right-click.
+     *
+     * IPromtYesNO provides no equivalent lifecycle hook.
+     */
     private ACTION onDismissed;
 
     private final ACTION close = new ACTION() {
@@ -67,12 +62,8 @@ public class ThalIPromtButtons extends Interrupter {
         this.text.text().setMaxWidth(800);
     }
 
-    // buttons' own clickA()/clickActionSet() logic is untouched by this
-    // class - each one is expected to already carry whatever it should do
-    // when clicked, the same way every button built elsewhere in this
-    // project already works. This class's own job is only sizing/showing
-    // the box and guaranteeing onDismissed fires exactly once per exit,
-    // regardless of which of those buttons (or ESC/right-click) closed it.
+    // Buttons retain ownership of their own actions. This method presents
+    // the dialog and guarantees onDismissed executes once when it closes.
     public void activate(CharSequence message, ACTION onDismissed, boolean dismissable, GButt... buttons) {
         this.show(this.m);
         this.dismissable = dismissable;
@@ -85,12 +76,6 @@ public class ThalIPromtButtons extends Interrupter {
         }
 
         this.section.addDownC(0, this.text);
-
-        // Evenly spaced, centered row - mirrors IPromtScreen's own
-        // button-layout math (a width/12 slot per button, centered on
-        // total count) rather than IPromtYesNO's hardcoded two-button
-        // left/right split, since this needs to work for any button
-        // count, not just two.
         int slotWidth = C.WIDTH() / 12;
         int x = this.section.body().cX() - buttons.length * slotWidth / 2;
         int y = this.section.getLastY2() + 16;
@@ -104,12 +89,8 @@ public class ThalIPromtButtons extends Interrupter {
         this.box.setCloseAction(dismissable ? this.close : null);
         this.box.inner().set(this.section.body());
         this.section.add(this.box);
-        // Box added and pushed behind everything else added above (text,
-        // buttons) - matches IPromtYesNO's own identical sequencing,
-        // confirmed necessary so a button's own hoverable area takes
-        // priority over the box's own broader area during hover/click
-        // detection, rather than clicks on a button being swallowed by
-        // the box underneath it.
+        // Keep the background panel behind the controls so they receive
+        // hover and click events.
         this.section.moveLastToBack();
     }
 
@@ -131,19 +112,12 @@ public class ThalIPromtButtons extends Interrupter {
         return true;
     }
 
-    // Deliberately does NOT delegate to this.section.click() the way
-    // IPromtYesNO's own mouseClick() effectively does through its two
-    // hardcoded buttons' own clickA() - that approach only works because
-    // vanilla hardcodes "hide() runs first" into each of its exactly two
-    // buttons individually. Since this class accepts an arbitrary,
-    // caller-built button array instead, it can't rely on every button
-    // having been individually wired to call deactivate() itself.
-    // Reading section.getHovered() directly and calling deactivate()
-    // BEFORE the hovered element's own click() mirrors IPromtScreen's own
-    // confirmed "deactivate first, then let the specific clicked thing's
-    // own action run" ordering, generalized to work for any button
-    // (or, incidentally, the box's own close-X, which is equally
-    // CLICKABLE and handled identically here without special-casing it).
+    /*
+     * Close the dialog before dispatching the clicked control's action.
+     *
+     * This guarantees consistent dismissal behavior regardless of which
+     * clickable control initiated it.
+     */
     @Override
     protected void mouseClick(MButt button) {
         if (button == MButt.LEFT) {

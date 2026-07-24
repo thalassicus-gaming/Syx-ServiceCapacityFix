@@ -26,38 +26,24 @@ import view.interrupter.Interrupter;
 import view.keyboard.KEYS;
 import view.main.VIEW;
 
-// A fork of Jake's own util.gui.misc.GDropDown, existing for exactly one
-// reason: vanilla GDropDown has no way to remove an entry once added - its
-// own backing list (an ArrayListResize, confirmed from that class's own
-// source) actually supports removal fine (removeOrdered(E), remove(E),
-// iterator()), but GDropDown itself never exposes any of that. Extending
-// GDropDown instead of forking wasn't possible - es is a private field,
-// unreachable even from a subclass. Everything else here is otherwise
-// unchanged from vanilla; only remove() below is new.
-//
-// Reflecting into GDropDown's own private es field (matching
-// ThalReflectionUtil's existing pattern for InterManager.inters) was
-// considered and rejected in favor of this fork - reflection into a
-// private field two layers removed from where it's actually used read as
-// a more fragile, harder-to-follow coupling than owning a small, fully
-// understood copy of a ~200-line class used in exactly one place in the
-// base game to begin with.
+/*
+ * Fork of GDropDown that supports dynamic entry lists.
+ *
+ * Vanilla GDropDown assumes its entries are fixed after initialization and
+ * provides no way to remove them. This fork allows the entry list to change
+ * at runtime while otherwise preserving the original behavior.
+ *
+ * Extending GDropDown is not possible because its backing collection is
+ * private, so maintaining a small fork is simpler than working around that
+ * limitation.
+ */
 public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLICKABLE.ClickableAbs implements CLICKABLE {
 
-    // 5px above and below the selected entry's own text - previously the
-    // box's own height was font.height() + 2 (an unexplained, minimal
-    // vanilla constant), leaving text flush against the top/bottom edges.
+    // Padding above and below the selected entry.
     private static final int VERTICAL_MARGIN = 5;
-    // Left edge of the selected entry's own rendered text - matches
-    // ProfileDropdownEntry's own "+4" padding convention, so text lines up
-    // the same way whether it's being measured for the popup or drawn
-    // here in the closed box.
+    // Left padding for the selected entry's text.
     private static final int HORIZONTAL_TEXT_MARGIN = 4;
-    // Reserved on the right regardless of hover state, so the selected
-    // entry's own text never visually collides with the arrow icon that
-    // only appears while hovered - reserving it unconditionally avoids the
-    // text's own available width (and therefore its truncation point)
-    // silently changing the instant the mouse moves over the box.
+    // Reserve space so the arrow never overlaps the selected text.
     private static final int ARROW_ICON_RESERVED_WIDTH = 24;
 
     private E selected;
@@ -70,16 +56,12 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
         }
     };
 
-    // Null by default, meaning "use VIEW.current().uiManager" (vanilla
-    // GDropDown's own, only, behavior) - a caller showing this dropdown
-    // inside a GLOBAL overlay (VIEW.inters().manager, not tied to
-    // whichever view happens to be current) needs to explicitly point the
-    // dropdown's own popup at that SAME manager via expansionManager()
-    // below, or the popup registers with a different InterManager than
-    // the one actually driving frames for that overlay - it would exist,
-    // but never render or receive clicks. Discovered the hard way: this
-    // exact mismatch was why ThalCapacityUI's own dropdown did nothing
-    // when clicked, the first time this fork was actually tested in-game.
+    /*
+     * Defaults to VIEW.current().uiManager.
+     *
+     * Callers displaying the dropdown from another InterManager must set
+     * this so the popup is registered with the same manager driving the UI.
+     */
     private InterManager expansionManager;
 
     public ThalGDropDown<E> expansionManager(InterManager manager) {
@@ -87,22 +69,8 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
         return this;
     }
 
-    // No title/label text shown in the closed box anymore - vanilla
-    // GDropDown's (and this fork's own, until now) design always showed a
-    // fixed label ("Profile") to the left of the selected entry's own
-    // name, with a separator line between them. Removed entirely per the
-    // design change: the box now shows ONLY the selected entry's own name,
-    // using its full available width.
-    //
-    // width is now a genuinely FIXED constraint on this.body, set once
-    // here and never touched again - unlike this class's own earlier
-    // init(), which recalculated this.body's width from whatever the
-    // widest entry happened to measure. That's exactly what caused the
-    // box to visibly grow out from underneath ThalCapacityUI's own
-    // neighboring buttons whenever a long profile name got added; a
-    // fixed width plus ProfileDropdownEntry's own truncation (see its
-    // render()'s own comment) is what actually fixes that, rather than
-    // just papering over the symptom with a wider box.
+    // Fixed-width dropdown. Entries are truncated rather than resizing
+    // the control.
     public ThalGDropDown(int width) {
         this.body.setDim(width, UI.FONT().S.height() + 2 * VERTICAL_MARGIN);
         this.inter = new ThalGDropDown.Inter();
@@ -128,16 +96,8 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
             int y1 = this.selected.body().y1();
             int width = this.selected.body().width();
             this.selected.body().centerY(this.body);
-            // moveX1() alone correctly repositions the entry's left edge
-            // while preserving its CURRENT (still natural/popup-sized)
-            // width - confirmed from Rec.setWidth()'s own behavior via
-            // DIR.reposition()'s west-anchored branch, which calls
-            // setWidth() alone with no follow-up move, implying setWidth()
-            // itself already preserves x1. availableWidthSet() below is
-            // what actually constrains the entry's own width; ordering
-            // position first, resize second, means the resize correctly
-            // shrinks FROM the position moveX1() just established, rather
-            // than from wherever x1 happened to be beforehand.
+            // Temporarily constrain the selected entry while rendering
+            // inside the closed dropdown.
             this.selected.body().moveX1(this.body.x1() + HORIZONTAL_TEXT_MARGIN);
             this.selected.availableWidthSet(this.body.width() - HORIZONTAL_TEXT_MARGIN - ARROW_ICON_RESERVED_WIDTH);
             this.selected.render(r, ds);
@@ -178,23 +138,12 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
         return this;
     }
 
-    // The one capability this fork exists to add. Uses removeOrdered()
-    // rather than remove(E) (an unordered swap-with-last, per
-    // ArrayListResize's own source) - dropdown entries have a meaningful
-    // visual order (alphabetical, per ThalCapacityUI's own callers), and
-    // silently reordering the remaining entries on every removal would be
-    // a visible, surprising side effect. Rebuilds the rendered popup via
-    // init() immediately - unlike add(), which the caller is expected to
-    // batch and call init() once after (see init()'s own comment), a
-    // single removal is a one-off action safe to immediately re-render
-    // for, matching how callers actually use this in practice.
-    //
-    // If e was the current selection, selected becomes null rather than
-    // left dangling on an entry no longer in the list - matches
-    // ThalCapacityProfileManager.removeProfile()'s own identical
-    // reasoning for activeProfile. The caller is expected to explicitly
-    // setSelected() to whatever's appropriate afterward, same discipline
-    // already used everywhere selection changes in this project.
+    /*
+     * Removes an entry while preserving display order.
+     *
+     * If the removed entry was selected, the selection becomes null and
+     * the popup is rebuilt immediately.
+     */
     public ThalGDropDown<E> remove(E e) {
         this.es.removeOrdered(e);
         if (this.selected == e) {
@@ -205,11 +154,6 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
         return this;
     }
 
-    // 0 by default, meaning "no floor - purely determined by the widest
-    // current entry" (vanilla GDropDown's own, only, behavior). A caller
-    // wanting the popup to never look cramped regardless of how short its
-    // entries' own labels happen to be can set a floor via
-    // minExpansionWidth() below.
     private int minExpansionWidth = 0;
 
     public ThalGDropDown<E> minExpansionWidth(int width) {
@@ -217,12 +161,8 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
         return this;
     }
 
-    // Batches every add() call before rebuilding the popup once, rather
-    // than after each individual add() - callers doing a bulk initial
-    // population (ThalCapacityUI's own buildProfileDropdown()) call this
-    // once at the end, not per-entry. remove() above does NOT follow this
-    // convention - see its own comment for why an immediate rebuild is
-    // the right default there instead.
+    // Rebuild once after bulk add() operations rather than after every
+    // individual addition.
     public ThalGDropDown<E> init() {
         this.expansion.clear();
         int w = this.minExpansionWidth;
@@ -238,24 +178,15 @@ public class ThalGDropDown<E extends CLICKABLE & ThalDropDownEntry> extends CLIC
             }
         }
 
-        // this.body's own width is fixed at construction time now (see
-        // the constructor's own comment) - w/h below still drive the
-        // POPUP's own column sizing only, no longer this.body's.
         this.dummy.body.setWidth(w).setHeight(h);
-        // Deliberately NOT calling this.es.trim() here, unlike vanilla
-        // GDropDown's own init(). trim() shrinks the backing array to
-        // EXACTLY the current entry count, leaving zero spare capacity.
-        // ArrayListResize.increase() only grows when
-        // "last == es.length - 1" (one slot of headroom expected) - after
-        // a trim(), that condition can never be true again (length
-        // already equals last), so the very next add() writes to
-        // es[last] one slot past the actual array length -
-        // ArrayIndexOutOfBoundsException, confirmed the hard way the
-        // first time a profile was saved after this dropdown's initial
-        // population. Vanilla GDropDown never hits this, because vanilla
-        // never adds anything after its own init() runs - this fork
-        // exists specifically so that's no longer true, so the trim()
-        // that was harmless there is actively broken here.
+        /*
+         * Deliberately do not call ArrayListResize.trim().
+         *
+         * Unlike vanilla GDropDown, this fork allows entries to be added
+         * after initialization. trim() removes the spare capacity that
+         * ArrayListResize's growth logic expects, causing later additions
+         * to fail.
+         */
         GTableBuilder builder = new GTableBuilder() {
             @Override
             public int nrOFEntries() {
